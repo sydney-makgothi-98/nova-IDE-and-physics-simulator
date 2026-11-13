@@ -1198,7 +1198,7 @@ void App::drawCanvas() {
 
     // ---- run controls (top left of the canvas): Run, Pause, Stop, Step, Compute
     toolbarMin = toolbarMax = ImVec2(0, 0);
-    if (!recording) {
+    if (!(recording && recHideControls)) {
         const bool hasDyn = m.dynamicCount() > 0, computing = state == RunState::Computing;
         auto colored = [](float r, float g, float b) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(r, g, b, 1.0f));
@@ -1251,7 +1251,7 @@ void App::drawCanvas() {
     overlayMin = overlayMax = ImVec2(0, 0);
     bool anyDeformable = false;
     for (const Body& b : m.bodies) anyDeformable = anyDeformable || b.isDynamic();
-    if (!recording && anyDeformable) {
+    if (!(recording && recHideControls) && anyDeformable) {
         // the readout lines are collected first so the control strip can sit at the bottom right with the lines stacked above it
         struct Ln { std::string t; ImU32 c; };
         std::vector<Ln> lines;

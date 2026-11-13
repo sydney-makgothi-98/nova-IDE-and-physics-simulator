@@ -104,10 +104,17 @@ public:
 
     bool close() {
         if (!writer_) return false;
-        HRESULT hr = writer_->Finalize();                              // writes the index so players can open the file
+        if (frame_ == 0) { abandon(); return false; }                  // nothing was written: finalizing an empty file is an error
+        HRESULT hr = E_FAIL;
+        try { hr = writer_->Finalize(); } catch (...) { hr = E_FAIL; } // writes the index so players can open the file
         writer_->Release();
         writer_ = nullptr;
         return SUCCEEDED(hr);
+    }
+
+    // drop the writer without finishing the file
+    void abandon() {
+        if (writer_) { writer_->Release(); writer_ = nullptr; }
     }
 
 private:

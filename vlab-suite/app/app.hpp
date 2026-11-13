@@ -196,6 +196,7 @@ struct App {
 
     // ---------------------------------------------------------------- recording
     bool recording = false;
+    bool recHideControls = false;        // hide the Run/Pause/Stop buttons and deformation strip while recording (cleaner video)
     int recFrames = 0;
     double recAccum = 0;
     int recX = 0, recY = 0, recW = 0, recH = 0;

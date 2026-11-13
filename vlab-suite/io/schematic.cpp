@@ -62,13 +62,26 @@ bool exportSchematicSvg(const std::string& path, const Model& m, const Schematic
     // ---- world bounds
     double minx = 1e30, miny = 1e30, maxx = -1e30, maxy = -1e30;
     auto grow = [&](Vec2 v) { minx = std::min(minx, v.x); miny = std::min(miny, v.y); maxx = std::max(maxx, v.x); maxy = std::max(maxy, v.y); };
+    // an "indefinite" floor (thousands of metres) is drawn only a little wider than the parts it carries
+    auto isInf = [](const Body& b) { return b.shape.preset == ShapePreset::Line && b.shape.w >= 5000.0; };
     for (const Body& b : m.bodies) {
+        if (isInf(b)) continue;
         Rot r(b.angle);
         if (b.shape.isCircle()) { grow(b.pos + Vec2(b.shape.radius, b.shape.radius)); grow(b.pos - Vec2(b.shape.radius, b.shape.radius)); }
         else if (b.kind == BodyKind::Anchor) { grow(b.pos + Vec2(0.15, 0.3)); grow(b.pos - Vec2(0.15, 0.1)); }
         else for (const Vec2& v : b.shape.verts) grow(b.pos + r.apply(v));
         if (o.loads && b.loadN > 0) grow(b.pos + Vec2(0.9, 0.9)), grow(b.pos - Vec2(0.9, 0.9));
     }
+    if (minx > maxx) { minx = -2; maxx = 2; miny = -1; maxy = 1; }                      // only an indefinite floor in the design
+    const double infHalf = std::max(2.0, (maxx - minx) * 0.65);                         // half the length shown for an indefinite floor
+    for (const Body& b : m.bodies)
+        if (isInf(b)) {
+            Rot r(b.angle);
+            const double cx = 0.5 * (minx + maxx);
+            Vec2 c = b.pos;
+            if (std::fabs(std::cos(b.angle)) > 0.5) { c.x = cx; c.y = b.pos.y + (cx - b.pos.x) * std::tan(b.angle); }
+            grow(c + r.apply(Vec2(-infHalf, 0))); grow(c + r.apply(Vec2(infHalf, 0)));
+        }
     const double dw = std::max(0.5, maxx - minx), dh = std::max(0.5, maxy - miny);
     const double W = 1320, margin = 290, padTop = 70, padBot = 60;
     double scale = std::min((W - 2 * margin) / dw, 620.0 / dh);
@@ -116,7 +129,13 @@ bool exportSchematicSvg(const std::string& path, const Model& m, const Schematic
             Rot r(b.angle);
             if (b.kind == BodyKind::Anchor) continue;                              // supports are drawn with their connections below
             if (b.shape.preset == ShapePreset::Line) {                             // a floor or wall: a thick line with hatching on the underside
-                Pt a = S(b.pos + r.apply(Vec2(-b.shape.w / 2, 0))), c = S(b.pos + r.apply(Vec2(b.shape.w / 2, 0)));
+                Vec2 fc = b.pos;
+                double hl = b.shape.w / 2;
+                if (isInf(b)) {
+                    hl = infHalf;
+                    if (std::fabs(std::cos(b.angle)) > 0.5) { fc.x = 0.5 * (minx + maxx); fc.y = b.pos.y + (fc.x - b.pos.x) * std::tan(b.angle); }
+                }
+                Pt a = S(fc + r.apply(Vec2(-hl, 0))), c = S(fc + r.apply(Vec2(hl, 0)));
                 line(a, c, 3.2);
                 Pt u = c - a;
                 double L = len(u);

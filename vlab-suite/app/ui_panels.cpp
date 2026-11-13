@@ -1270,10 +1270,14 @@ void App::drawData() {
     ImGui::Separator();
 
     ImGui::TextUnformatted("Screen recording");
-    if (recording) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.15f, 0.15f, 1));
-    if (ImGui::Button(recording ? "Stop recording" : "Record video (F9)", ImVec2(-1, 32))) { if (recording) stopRecording(); else { ensureDirectory(recordingsDir); startRecording(); } }
-    if (recording) ImGui::PopStyleColor();
+    const bool wasRecording = recording;                  // the click below changes `recording`: push and pop must use the same answer
+    if (wasRecording) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.15f, 0.15f, 1));
+    const bool clickedRec = ImGui::Button(wasRecording ? "Stop recording" : "Record video (F9)", ImVec2(-1, 32));
+    if (wasRecording) ImGui::PopStyleColor();
+    if (clickedRec) { if (wasRecording) stopRecording(); else { ensureDirectory(recordingsDir); startRecording(); } }
     ImGui::Checkbox("Record the whole window, not just the canvas", &recWholeWindow);
+    ImGui::Checkbox("Hide the Run / Pause / Stop buttons in the video", &recHideControls);
+    wrapDisabled("Press Record first, then Run: the buttons stay available while recording.");
     if (ImGui::Checkbox("Record automatically during every run", &autoRecord)) settingsChanged = true;
     wrapDisabled("Video frames are exactly 1/60 s of physics, so the movie plays at the right speed.");
     if (settingsChanged) saveDataSettings();

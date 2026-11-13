@@ -323,7 +323,7 @@ void App::advanceRun(float dt) {
             if (std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() > 0.02) break;
         }
         finishRunIfDone();
-    } else if (state == RunState::Paused || state == RunState::Design) {
+    } else if (state == RunState::Paused || state == RunState::Design || state == RunState::Done) {
         if (recording) {
             recAccum += dt;
             if (recAccum >= 1.0 / 60.0) { recAccum = 0; wantCapture = true; }
@@ -460,7 +460,9 @@ void App::startRecording() {
     recPath = recordingsDir + "\\VibrationLab_" + stamp() + ".mp4";
     encoder = std::make_unique<VideoEncoder>();
     std::string err;
-    if (!encoder->open(recPath, recW, recH, 60, err)) { say("Cannot record: " + err, true); encoder.reset(); return; }
+    bool opened = false;
+    try { opened = encoder->open(recPath, recW, recH, 60, err); } catch (const std::exception& e) { err = e.what(); } catch (...) { err = "unknown error"; }
+    if (!opened) { say("Cannot record: " + err, true); encoder.reset(); DeleteFileA(recPath.c_str()); return; }
     recording = true;
     recFrames = 0;
     recAccum = 0;
@@ -470,10 +472,15 @@ void App::startRecording() {
 void App::stopRecording() {
     if (!recording) return;
     recording = false;
-    bool ok = encoder && encoder->close();
+    const bool empty = recFrames == 0;
+    bool ok = false;
+    try { ok = encoder && encoder->close(); } catch (...) { ok = false; }
     encoder.reset();
     if (ok) { lastExportPath = recPath; say("Video saved: " + recPath); }
-    else say("The video could not be finished.", true);
+    else {
+        DeleteFileA(recPath.c_str());                                             // never leave an unplayable 0-byte file behind
+        say(empty ? "Nothing was recorded: press Run, then Record video, so there is motion to film." : "The video could not be finished.", true);
+    }
 }
 
 void App::endOfFrameCapture() {
@@ -485,7 +492,8 @@ void App::endOfFrameCapture() {
     const void* px = nullptr;
     int rowBytes = 0;
     if (!platform->grabFrame(recX, recY, recW, recH, &px, &rowBytes)) { stopRecording(); say("Could not read the screen: recording stopped.", true); return; }
-    bool ok = encoder->addFrame(px, rowBytes);
+    bool ok = false;
+    try { ok = encoder->addFrame(px, rowBytes); } catch (...) { ok = false; }
     platform->releaseFrame();
     if (!ok) { stopRecording(); say("The encoder reported an error: recording stopped.", true); return; }
     ++recFrames;
@@ -836,6 +844,12 @@ void App::autotestStep() {
         case 263: { const Link& l = design().links[0]; FILE* f = std::fopen((autotestDir + "/orient.txt").c_str(), "w");
                     if (f) { std::fprintf(f, "after Make it vertical: la(%.3f,%.3f) lb(%.3f,%.3f)", l.la.x, l.la.y, l.lb.x, l.lb.y); std::fclose(f); }
                     shot("orient_after.bmp"); autotestPhase = 107; autotestWait = 3; } break;
+        case 270: showWelcome = false; pageDashboard = false; loadExample(6); design().run.duration = 1; autotestPhase = 271; autotestWait = 3; break;   // record on a FINISHED run
+        case 271: startRun(false); autotestPhase = 272; break;
+        case 272: if (state == RunState::Done) { startRecording(); autotestPhase = 273; autotestWait = 60; } break;
+        case 273: stopRecording(); autotestPhase = 274; autotestWait = 3; break;
+        case 274: { FILE* f = std::fopen((autotestDir + "/rec_done.txt").c_str(), "w");
+                    if (f) { std::fprintf(f, "frames=%d path=%s", recFrames, recPath.c_str()); std::fclose(f); } autotestPhase = 107; } break;
         case 107: say("autotest finished"); autotestQuit = true; autotestPhase = 108; break;
         case 64: say("autotest finished"); autotestQuit = true; autotestPhase = 65; break;
         default: break;
