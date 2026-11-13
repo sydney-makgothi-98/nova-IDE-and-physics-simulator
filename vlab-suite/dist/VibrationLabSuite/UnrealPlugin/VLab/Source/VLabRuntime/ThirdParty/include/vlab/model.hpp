@@ -15,6 +15,7 @@ struct Material {
     double muK = 0.4;          // kinetic (sliding) friction coefficient
     double restitution = 0.3;  // bounciness: 0 = dead, 1 = perfectly elastic
     double rollRes = 0.0;      // rolling resistance coefficient (dimensionless, about 0.001 to 0.05)
+    double youngs = 200e9;     // Young's modulus E in pascals (stiffness): sets how much a body bends or squashes (deform.hpp)
 };
 
 // Generic textbook-level values. Real values depend on surface finish, temperature and speed.
@@ -58,6 +59,7 @@ struct Body {
     double driveF = 0;              // harmonic push: amplitude (N) ...
     double driveAngleDeg = 0;       // ... direction (0 = right, 90 = down) ...
     double driveW = 0;              // ... and angular frequency (rad/s)
+    double driveT = 0;              // > 0: instead a single half-sine PULSE of this many seconds starting at t = 0 (a gun, a hammer blow)
     unsigned color = 0xFF3574F0;    // ARGB for drawing
 
     // derived by Model::updateMass()

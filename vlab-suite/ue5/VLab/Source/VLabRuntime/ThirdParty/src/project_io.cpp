@@ -29,7 +29,7 @@ std::string modelToText(const Model& m) {
           << b.mat.muS << "\t" << b.mat.muK << "\t" << b.mat.restitution << "\t" << b.mat.rollRes << "\t" << b.massFromDensity << "\t"
           << b.mass << "\t" << b.pos.x << "\t" << b.pos.y << "\t" << b.angle << "\t" << b.vel.x << "\t" << b.vel.y << "\t" << b.omega
           << "\t" << b.lockX << "\t" << b.lockY << "\t" << b.lockRot << "\t" << b.driveF << "\t" << b.driveAngleDeg << "\t" << b.driveW
-          << "\t" << b.color << "\t" << b.collide << "\n";
+          << "\t" << b.color << "\t" << b.collide << "\t" << b.mat.youngs << "\t" << b.driveT << "\n";
     }
     for (const Link& l : m.links) {
         o << "link\t" << (int)l.kind << "\t" << l.a << "\t" << l.b << "\t" << l.la.x << "\t" << l.la.y << "\t" << l.lb.x << "\t" << l.lb.y
@@ -92,6 +92,9 @@ bool modelFromText(const std::string& text, Model& out, std::string* error) {
             b.driveF = num(f, 25); b.driveAngleDeg = num(f, 26); b.driveW = num(f, 27);
             if (f.size() > 28) b.color = (unsigned)std::stoull(f[28]);
             if (f.size() > 29) b.collide = num(f, 29, 1) != 0;
+            if (const Material* lm = findMaterial(b.mat.name)) b.mat.youngs = lm->youngs;     // older files: take the stiffness from the named material
+            if (f.size() > 30 && num(f, 30, 0) > 0) b.mat.youngs = num(f, 30, b.mat.youngs);
+            if (f.size() > 31) b.driveT = num(f, 31, 0);
             m.bodies.push_back(b);
         } else if (k == "link" && f.size() >= 14) {
             Link l;
@@ -111,6 +114,16 @@ bool modelFromText(const std::string& text, Model& out, std::string* error) {
     for (int i = (int)m.links.size() - 1; i >= 0; --i) {          // drop links that point at missing bodies
         const Link& l = m.links[i];
         if (l.a < 0 || l.b < 0 || l.a >= (int)m.bodies.size() || l.b >= (int)m.bodies.size() || l.a == l.b) m.links.erase(m.links.begin() + i);
+    }
+    for (Body& b : m.bodies) {                                     // designs from v1.0 drew floors and walls as thin slabs: turn them into lines
+        if (b.kind != BodyKind::Static || b.shape.preset != ShapePreset::Box) continue;
+        Rot r(b.angle);
+        double w = b.shape.w, h = b.shape.h;
+        if (w >= h) b.pos += r.apply(Vec2(0, -h / 2));              // the line sits on the slab's top face
+        else { b.angle += kPi / 2; b.shape.w = h; }                 // an upright slab becomes a vertical line along its centre
+        if (w >= h) b.shape.w = w;
+        b.shape.preset = ShapePreset::Line;
+        b.color = 0xFFC8CEDA;
     }
     m.updateMass();
     out = m;
@@ -516,6 +529,191 @@ Example roboticArm() {
     m.run.duration = 15;
     return e;
 }
+// ---- five bigger machines
+Example carSuspension() {
+    Example e{"Car suspension over speed bumps",
+              "A car body on two trailing-arm suspensions (arm + coil spring + damper + rubber wheel) rolls at 5 m/s over two round speed bumps. Plot the chassis dy and angle to see "
+              "bounce and pitch, compare each wheel's dy with the body's, and read the Energy ledger: the dampers turn the bump's energy into heat. Raise or lower a damper's c to tune the ride.", {}};
+    Model& m = e.model;
+    m.name = "Car suspension";
+    m.env.setRealistic();
+    m.env.eCombine = Combine::Min;
+    const double v0 = 5.0, roadY = 3.0, r = 0.32;
+    add(m, makeFloor(44, 0, mat("Concrete"), {16, roadY}), "Road");
+    int nb = 0;
+    for (double bx : {7.0, 14.0}) {
+        Body bp = makeCircle(0.8, mat("Concrete"), {bx, roadY + 0.8 - 0.22});    // a round hump 0.22 m high
+        bp.kind = BodyKind::Static;
+        add(m, bp, ++nb == 1 ? "Bump 1" : "Bump 2");
+    }
+    Body ch = makeBox(3.2, 0.5, mat("Steel"), {0, 1.9});
+    ch.massFromDensity = false; ch.mass = 900; ch.collide = false; ch.vel = {v0, 0};
+    ch.color = 0xFF3F8FE0;
+    int ic = add(m, ch, "Chassis");
+    for (int side : {-1, 1}) {                                                   // -1: rear (trailing arm), +1: front (leading arm)
+        const Vec2 pivot(side * 1.0, 2.15), wheel(side * 1.9, roadY - r);
+        const Vec2 mid = (pivot + wheel) * 0.5;
+        Body arm = makeBeam(length(wheel - pivot), 0.08, mat("Steel"), mid);
+        arm.angle = std::atan2(wheel.y - pivot.y, wheel.x - pivot.x);
+        arm.massFromDensity = false; arm.mass = 15; arm.collide = false; arm.vel = {v0, 0};
+        int ia = add(m, arm, side < 0 ? "Rear arm" : "Front arm");
+        Body w = makeCircle(r, mat("Rubber"), wheel);
+        w.massFromDensity = false; w.mass = 25; w.vel = {v0, 0}; w.omega = v0 / r;
+        w.mat.rollRes = 0.004;
+        int iw = add(m, w, side < 0 ? "Rear wheel" : "Front wheel");
+        m.addLink(LinkKind::Pin, ic, ia, pivot, pivot);
+        m.addLink(LinkKind::Pin, ia, iw, wheel, wheel);
+        auto armY = [&](double x) { return pivot.y + (wheel.y - pivot.y) * (x - pivot.x) / (wheel.x - pivot.x); };
+        double sx = side * 1.45, dx = side * 1.6;
+        int s = m.addLink(LinkKind::Spring, ic, ia, {sx, 1.9}, {sx, armY(sx)});
+        if (s >= 0) { m.links[s].k = 45000; m.links[s].L0 = (armY(sx) - 1.9) + 0.2; m.links[s].autoRest = false; }
+        int d = m.addLink(LinkKind::Damper, ic, ia, {dx, 1.9}, {dx, armY(dx)});
+        if (d >= 0) m.links[d].c = 4000;
+    }
+    m.run.duration = 6;
+    m.run.sampleHz = 200;
+    return e;
+}
+Example railgun() {
+    Example e{"Railgun firing and recoiling",
+              "A 2 kg slug is driven down a rail housing by a single 80 ms pulse of force (Properties > Pulse length). Newton's third law pushes the 60 kg housing the other way, "
+              "and its recoil spring and damper bring it back to rest. The slug then hits a clay target on springs. Plot the three x positions, compare the momenta, and read the Energy ledger "
+              "for the impact loss.", {}};
+    Model& m = e.model;
+    m.name = "Railgun";
+    m.env.setRealistic();
+    m.env.eCombine = Combine::Min;
+    add(m, makeFloor(18, 0, mat("Concrete"), {3.0, 0.9}), "Ground");
+    Body hs = makeBox(3.0, 0.3, mat("Steel"), {0, 0});
+    hs.massFromDensity = false; hs.mass = 60; hs.lockY = true; hs.lockRot = true; hs.collide = false;
+    hs.driveF = 1000; hs.driveAngleDeg = 180; hs.driveT = 0.08;               // the reaction: equal and opposite, same pulse
+    hs.color = 0xFF6A7488;
+    int ih = add(m, hs, "Housing");
+    Body sl = makeBox(0.35, 0.12, mat("Steel"), {-1.1, 0});
+    sl.massFromDensity = false; sl.mass = 2; sl.lockY = true; sl.lockRot = true;
+    sl.driveF = 1000; sl.driveAngleDeg = 0; sl.driveT = 0.08;
+    sl.color = 0xFFE8B04A;
+    add(m, sl, "Slug");
+    int w1 = m.addBody(makeAnchor({-3.6, 0.0})), w2 = m.addBody(makeAnchor({-3.6, 0.3}));
+    int sp = m.addLink(LinkKind::Spring, w1, ih, {-3.6, 0.0}, {-1.5, 0.0});
+    if (sp >= 0) m.links[sp].k = 1500;
+    int dp = m.addLink(LinkKind::Damper, w2, ih, {-3.6, 0.3}, {-1.5, 0.3});
+    if (dp >= 0) m.links[dp].c = 250;
+    Body tg = makeBox(0.5, 0.9, mat("Clay / putty"), {6.0, 0.0});
+    tg.massFromDensity = false; tg.mass = 30; tg.lockY = true; tg.lockRot = true;
+    tg.color = 0xFFB07A55;
+    int it = add(m, tg, "Target");
+    int w3 = m.addBody(makeAnchor({9.5, 0.0})), w4 = m.addBody(makeAnchor({9.5, 0.3}));
+    int s2 = m.addLink(LinkKind::Spring, it, w3, {6.25, 0.0}, {9.5, 0.0});
+    if (s2 >= 0) m.links[s2].k = 800;
+    int d2 = m.addLink(LinkKind::Damper, it, w4, {6.25, 0.3}, {9.5, 0.3});
+    if (d2 >= 0) m.links[d2].c = 120;
+    m.run.duration = 4;
+    m.run.sampleHz = 400;
+    return e;
+}
+Example truckOnBridge() {
+    Example e{"Truck crossing a bridge",
+              "A 1.7 tonne truck rolls onto a 12 m steel deck that rests on a pin and a roller, crosses it and drives off the far side. Switch on Show deformation: the deck bends most "
+              "when the truck is near mid-span. The Deformation tab gives the deflection curve at any instant, the peak bending stress and span / deflection; read the support reactions too.", {}};
+    Model& m = e.model;
+    m.name = "Truck on a bridge";
+    m.env.setRealistic();
+    m.env.eCombine = Combine::Min;
+    const double deckY = 2.0, top = deckY - 0.2, r = 0.3, v0 = 2.8;
+    add(m, makeFloor(8, 0, mat("Concrete"), {-10.0, top}), "Approach");
+    add(m, makeFloor(8, 0, mat("Concrete"), {10.0, top}), "Exit road");
+    Body dk = makeBeam(12.0, 0.4, mat("Steel"), {0, deckY});
+    dk.massFromDensity = false; dk.mass = 1500;
+    dk.color = 0xFF8B94A6;
+    int id = add(m, dk, "Deck");
+    m.addSupport(LinkKind::Pin, id, {-6.0, deckY}, 0);
+    m.addSupport(LinkKind::Roller, id, {6.0, deckY}, 0);
+    Body ch = makeBox(2.6, 0.7, mat("Steel"), {-9.0, top - r - 0.05});
+    ch.massFromDensity = false; ch.mass = 1200; ch.collide = false; ch.vel = {v0, 0};
+    ch.color = 0xFFD0623A;
+    int ic = add(m, ch, "Truck");
+    for (int k = 0; k < 2; ++k) {
+        double wx = -9.0 + (k == 0 ? -0.9 : 0.9);
+        Body w = makeCircle(r, mat("Rubber"), {wx, top - r});
+        w.massFromDensity = false; w.mass = 60; w.vel = {v0, 0}; w.omega = v0 / r;
+        w.mat.rollRes = 0.003;
+        int iw = add(m, w, k == 0 ? "Rear wheel" : "Front wheel");
+        m.addLink(LinkKind::Pin, ic, iw, {wx, top - r}, {wx, top - r});
+    }
+    m.run.duration = 8;
+    m.run.sampleHz = 100;
+    return e;
+}
+Example crankEngine() {
+    Example e{"Single-cylinder engine (crank-slider)",
+              "A piston, connecting rod, crank and flywheel. Gas pressure is a repeating push on the piston; the crank has a small starter torque and bearing friction. Watch the flywheel "
+              "speed up and settle, plot the piston x against the crank angle, and read the main-bearing reaction: it pulses twice per turn. Change the flywheel mass to smooth the speed.", {}};
+    Model& m = e.model;
+    m.name = "Crank-slider engine";
+    m.env.setRealistic();
+    m.env.gravity = 0;
+    const double crankR = 0.5, rodL = 1.7, th = 0.35, cy = 1.0;                    // initial crank angle 0.35 rad (off dead centre)
+    const Vec2 pivot(0, cy), tip(crankR * std::cos(th), cy + crankR * std::sin(th));
+    const Vec2 pist(tip.x + std::sqrt(rodL * rodL - (tip.y - cy) * (tip.y - cy)), cy);
+    Body cr = makeBeam(crankR, 0.12, mat("Steel"), (pivot + tip) * 0.5);
+    cr.angle = th; cr.massFromDensity = false; cr.mass = 6; cr.collide = false; cr.omega = 8;
+    int icr = add(m, cr, "Crank");
+    Body fw = makeCircle(0.5, mat("Steel"), pivot);
+    fw.massFromDensity = false; fw.mass = 30; fw.collide = false; fw.omega = 8; fw.color = 0xFF5D7BA8;
+    int ifw = add(m, fw, "Flywheel");
+    Body rd = makeBeam(rodL, 0.1, mat("Aluminium"), (tip + pist) * 0.5);
+    rd.angle = std::atan2(pist.y - tip.y, pist.x - tip.x);
+    rd.massFromDensity = false; rd.mass = 8; rd.collide = false;
+    int ird = add(m, rd, "Connecting rod");
+    Body pn = makeBox(0.4, 0.5, mat("Steel"), pist);
+    pn.massFromDensity = false; pn.mass = 10; pn.lockY = true; pn.lockRot = true; pn.collide = false;
+    pn.driveF = 700; pn.driveAngleDeg = 180; pn.driveW = 13.0;
+    pn.color = 0xFFC9CED8;
+    int ip = add(m, pn, "Piston");
+    int bearing = m.addSupport(LinkKind::Pin, icr, pivot, 0);
+    m.addLink(LinkKind::Weld, icr, ifw, pivot, pivot);
+    m.addLink(LinkKind::Pin, icr, ird, tip, tip);
+    m.addLink(LinkKind::Pin, ird, ip, pist, pist);
+    if (bearing >= 0) { m.links[bearing].motorTorque = 25; m.links[bearing].jointC = 3.0; }
+    m.run.duration = 10;
+    m.run.sampleHz = 200;
+    return e;
+}
+Example catapult() {
+    Example e{"Pendulum and domino chain",
+              "A 5 kg ball on a rigid rod is released from the left, swings down and strikes the first of fourteen wooden dominoes. The chain topples one after another and the last one "
+              "nudges a ball along the floor. About thirty bodies and dozens of contacts: plot the pendulum's angle, find when each domino falls from its angle channel, and read the Energy tab "
+              "to see how the ball's energy is shared out and lost in impacts and friction.", {}};
+    Model& m = e.model;
+    m.name = "Pendulum and domino chain";
+    m.env.setRealistic();
+    m.env.eCombine = Combine::Min;
+    const double floorY = 3.0;
+    add(m, makeFloor(16, 0, mat("Concrete"), {0.0, floorY}), "Ground");
+    const Vec2 pivot(-3.6, -0.55);
+    const double rod = 3.2, a0 = 0.95;                                              // starts 0.95 rad (54 deg) to the left of straight down
+    int anc = m.addBody(makeAnchor(pivot));
+    Body ball = makeCircle(0.25, mat("Steel"), pivot + Vec2(-std::sin(a0), std::cos(a0)) * rod);
+    ball.massFromDensity = false; ball.mass = 5; ball.color = 0xFFE8B04A;
+    ball.collide = true;
+    int ib = add(m, ball, "Pendulum ball");
+    m.addLink(LinkKind::Rod, anc, ib, pivot, m.bodies[ib].pos);
+    for (int k = 0; k < 14; ++k) {
+        Body d = makeBox(0.12, 0.7, mat("Wood"), {-3.0 + 0.42 * k, floorY - 0.35});
+        d.massFromDensity = false; d.mass = 0.6;
+        char nm[32];
+        std::snprintf(nm, sizeof nm, "Domino %d", k + 1);
+        d.color = (k % 2) ? 0xFFD9C7A0 : 0xFFC4A878;
+        add(m, d, nm);
+    }
+    Body b2 = makeCircle(0.2, mat("Rubber"), {3.25, floorY - 0.2});
+    b2.massFromDensity = false; b2.mass = 1.5; b2.color = 0xFF55B1E0;
+    add(m, b2, "Target ball");
+    m.run.duration = 8;
+    m.run.sampleHz = 100;
+    return e;
+}
 }  // namespace
 
 const std::vector<Example>& exampleGallery() {
@@ -539,6 +737,11 @@ const std::vector<Example>& exampleGallery() {
         v.push_back(springAssembly());  v.back().category = 1;
         v.push_back(gantryCrane());     v.back().category = 2;
         v.push_back(roboticArm());      v.back().category = 2;
+        v.push_back(carSuspension());   v.back().category = 2;
+        v.push_back(railgun());         v.back().category = 2;
+        v.push_back(truckOnBridge());   v.back().category = 2;
+        v.push_back(crankEngine());     v.back().category = 2;
+        v.push_back(catapult());        v.back().category = 2;
         for (Example& e : v) e.model.updateMass();
         return v;
     }();

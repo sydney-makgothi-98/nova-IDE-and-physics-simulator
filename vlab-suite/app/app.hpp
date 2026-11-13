@@ -6,6 +6,7 @@
 #include <vector>
 #include "imgui.h"
 #include "vlab/analysis.hpp"
+#include "vlab/deform.hpp"
 #include "vlab/project_io.hpp"
 #include "vlab/session.hpp"
 
@@ -33,6 +34,7 @@ struct App {
     bool resultsStale = false;           // the design was edited after the run
     RunState state = RunState::Design;
     double timeScale = 1.0;
+    bool slowRun = false;                // the last frames could not keep up with real time
     std::string statusLine;
 
     // ---------------------------------------------------------------- view and tools
@@ -101,6 +103,29 @@ struct App {
     std::atomic<bool> frfDone{false};
     std::string frfNote;
     int phaseBody = 0;
+    bool plotPicked = false;             // the Plots tab has chosen its default channels for this run
+    bool specPicked = false;             // the Spectrum tab has chosen a signal that moves
+    int deformBody = 0;                  // Deformation tab: which body
+    int deformRow = -1;                  // Deformation tab: telemetry row shown in the shape plot (-1 = the row of peak deflection)
+
+    // ---------------------------------------------------------------- deformation view (canvas)
+    bool showDeform = true;
+    bool deformRealistic = true;         // blocks sink with the beam and their underside follows its bent surface
+    bool deformAuto = true;              // pick the exaggeration so the bending is easy to see
+    float deformExag = 100.0f;           // manual exaggeration factor
+    double deformPeak = 0;               // largest relative bending seen in this run (keeps the automatic factor steady)
+    double deformFactor = 1;             // the factor in use this frame
+    std::vector<Deflection> liveDef;     // per body, from the running world
+    std::vector<Squash> liveSquash;
+    std::vector<BeamFE> liveFE;
+    std::vector<std::vector<double>> smoothW;   // what is drawn: eases toward the real deflection over about 2.5 s so contact can be watched
+    std::vector<double> smoothStrain, smoothLoad, liveTarget;   // squash easing, and the real (un-eased) peak deflection per body
+    double lastSimT = -1;
+    std::vector<char> baseLatched;       // the beam has been touched once: its baseline is frozen
+    std::vector<std::vector<double>> baseW;   // each beam's shape while nothing touches it (its own weight): not drawn, so bending starts at contact
+    double curFilt = 0;                  // bending seen lately, low-passed (50 ms) so one-step contact spikes do not set the automatic exaggeration
+    ImVec2 overlayMin{0, 0}, overlayMax{0, 0};   // the control strip on the canvas (clicks there are not canvas clicks)
+    void updateLiveDeformation();
 
     // ---------------------------------------------------------------- recording
     bool recording = false;

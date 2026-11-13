@@ -344,7 +344,85 @@ void App::canvasInteract(ImVec2 mp, bool hovered) {
 }
 
 // ====================================================================== the panel
+// Reads the running world: how far every beam is bent and every compact body squashed right now, and picks the exaggeration to draw them with.
+void App::updateLiveDeformation() {
+    liveDef.clear();
+    liveSquash.clear();
+    liveFE.clear();
+    if (!ses.hasWorld()) { baseW.clear(); baseLatched.clear(); smoothW.clear(); smoothStrain.clear(); smoothLoad.clear(); lastSimT = -1; return; }
+    const World& w = *ses.world();
+    const Model& m = w.model();
+    const size_t n = m.bodies.size();
+    liveDef.resize(n);
+    liveSquash.resize(n);
+    liveFE.resize(n);
+    bool anyBeam = false;
+    double cur = 0;
+    for (size_t i = 0; i < n; ++i) {
+        const Body& b = m.bodies[i];
+        if (!b.isDynamic()) continue;
+        if (isBeamBody(b)) {
+            liveFE[i].build((int)i, b);
+            beamDeflection(w, liveFE[i], liveDef[i]);
+            {   // draw only what CONTACT adds: while nothing touches the beam its own-weight sag is remembered, not drawn
+                if (baseW.size() != n) { baseW.assign(n, {}); baseLatched.assign(n, 0); }
+                Deflection& d = liveDef[i];
+                if (!baseLatched[i]) { if (d.load <= 1e-6) baseW[i] = d.w; else baseLatched[i] = 1; }   // frozen at the first touch, so bounces cannot corrupt it
+                if (baseW[i].size() == d.w.size()) {
+                    d.maxAbs = d.maxSigned = d.atX = 0;
+                    for (size_t k = 0; k < d.w.size(); ++k) {
+                        d.w[k] -= baseW[i][k];
+                        if (std::fabs(d.w[k]) > d.maxAbs) { d.maxAbs = std::fabs(d.w[k]); d.maxSigned = d.w[k]; d.atX = liveFE[i].x[k]; }
+                    }
+                }
+            }
+            anyBeam = true;
+            cur = std::max(cur, liveDef[i].maxAbs / b.shape.w);
+        } else {
+            liveSquash[i] = bodySquash(w, (int)i);
+            if (!anyBeam) cur = std::max(cur, liveSquash[i].strain);
+        }
+    }
+    if (ses.simTime() + 1e-9 < lastSimT) curFilt = 0;
+    curFilt += (cur - curFilt) * (1.0 - std::exp(-std::min(0.1, (double)ImGui::GetIO().DeltaTime) / 0.05));
+    if (state == RunState::Running || state == RunState::Computing || state == RunState::Paused) deformPeak = std::max(deformPeak, curFilt);
+    // The picture follows the physics with a time constant of 0.55 s: after a block lands the sag builds up over about 2.5 s
+    // (95 % in 1.7 s, 99 % in 2.5 s) so the collision and the two bodies deforming together can be watched.
+    {
+        const double alpha = 1.0 - std::exp(-std::min(0.1, (double)ImGui::GetIO().DeltaTime) / 0.55);
+        if (ses.simTime() + 1e-9 < lastSimT) { baseW.assign(n, {}); baseLatched.assign(n, 0); }
+        if (ses.simTime() + 1e-9 < lastSimT || smoothW.size() != n) { smoothW.assign(n, {}); smoothStrain.assign(n, 0.0); smoothLoad.assign(n, 0.0); }
+        lastSimT = ses.simTime();
+        liveTarget.assign(n, 0.0);
+        for (size_t i = 0; i < n; ++i) {
+            if (!m.bodies[i].isDynamic()) continue;
+            if (liveFE[i].valid) {
+                Deflection& d = liveDef[i];
+                liveTarget[i] = d.maxAbs;
+                std::vector<double>& sw = smoothW[i];
+                if (sw.size() != d.w.size()) sw.assign(d.w.size(), 0.0);
+                d.maxAbs = d.maxSigned = d.atX = 0;
+                for (size_t k = 0; k < d.w.size(); ++k) {
+                    sw[k] += (d.w[k] - sw[k]) * alpha;
+                    d.w[k] = sw[k];
+                    if (std::fabs(sw[k]) > d.maxAbs) { d.maxAbs = std::fabs(sw[k]); d.maxSigned = sw[k]; d.atX = liveFE[i].x[k]; }
+                }
+            } else {
+                Squash& s = liveSquash[i];
+                smoothStrain[i] += (s.strain - smoothStrain[i]) * alpha;
+                smoothLoad[i] += (s.load - smoothLoad[i]) * alpha;
+                if (s.strain > 0) s.compression *= smoothStrain[i] / s.strain; else s.compression = 0;
+                s.strain = smoothStrain[i];
+                s.load = smoothLoad[i];
+            }
+        }
+    }
+    const double target = anyBeam ? 0.06 : 0.12;                      // automatic: the worst bend shows as 6 % of the beam length
+    deformFactor = deformAuto ? (deformPeak > 1e-14 ? clampd(target / deformPeak, 1.0, 1e7) : 1.0) : (double)deformExag;
+}
+
 void App::drawCanvas() {
+    updateLiveDeformation();
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::Begin("Simulation", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar();
@@ -355,6 +433,7 @@ void App::drawCanvas() {
     canvasMax = ImVec2(p0.x + size.x, p0.y + size.y);
     ImGui::InvisibleButton("canvas", size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
     bool hovered = ImGui::IsItemHovered();
+    if (hovered && ImGui::IsMouseHoveringRect(overlayMin, overlayMax, false)) hovered = false;   // the deformation controls sit on the canvas
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->PushClipRect(canvasMin, canvasMax, true);
     modeClock += ImGui::GetIO().DeltaTime;
@@ -444,7 +523,128 @@ void App::drawCanvas() {
             ImU32 line = sel ? IM_COL32(90, 205, 255, 255) : IM_COL32(12, 14, 18, 255);
             float lw = sel ? 3.0f : 1.6f;
             ImVec2 c = toScreen(p);
-            if (b.kind == BodyKind::Anchor) {
+            const bool beamDef = showDeform && ses.hasWorld() && i < liveFE.size() && liveFE[i].valid && liveDef[i].w.size() == liveFE[i].x.size();
+            // a compact body pressed by a contact: shorten it along the load line (and widen it a little) by the exaggerated strain
+            auto squashed = [&](std::vector<ImVec2>& out) {
+                if (!showDeform || !ses.hasWorld() || i >= liveSquash.size() || !b.isDynamic() || beamDef) return false;
+                const Squash& sq = liveSquash[i];
+                double e = std::min(0.5, sq.strain * deformFactor);
+                const bool squash = e >= 5e-4;
+                // REALISTIC: a body resting on a bending beam sinks with it and its underside takes the shape of the bent surface
+                int bj = -1;
+                double bestF = 0;
+                if (deformRealistic && !b.shape.isCircle() && b.shape.preset != ShapePreset::Line)
+                    for (const ContactInfo& ci : ses.world()->contacts()) {
+                        int o = ci.a == (int)i ? ci.b : (ci.b == (int)i ? ci.a : -1);
+                        if (o >= 0 && o < (int)liveFE.size() && liveFE[o].valid && ci.normalImpulse > bestF) { bestF = ci.normalImpulse; bj = o; }
+                    }
+                if (!squash && bj < 0) return false;
+                std::vector<Vec2> r;                                              // vertex offsets from the body's centre (world axes)
+                if (b.shape.isCircle()) for (int k = 0; k < 40; ++k) r.push_back(Vec2(std::cos(k * 2 * kPi / 40), std::sin(k * 2 * kPi / 40)) * b.shape.radius);
+                else for (const Vec2& v : b.shape.verts) r.push_back(Rot(a).apply(v));
+                if (squash) {
+                    Vec2 ax = sq.axis, pr = perp(ax);
+                    for (Vec2& v : r) { double u = dot(v, ax), q = dot(v, pr); v = ax * (u * (1 - e)) + pr * (q * (1 + 0.3 * e)); }
+                }
+                std::vector<Vec2> world;
+                bool conformed = false;
+                if (bj >= 0) {
+                    Vec2 pj;
+                    double aj;
+                    bodyPose(bj, pj, aj);
+                    const BeamFE& fe = liveFE[bj];
+                    const Deflection& dd = liveDef[bj];
+                    Rot rj(aj);
+                    Vec2 exj = rj.apply(Vec2(1, 0)), eyj = rj.apply(Vec2(0, 1));
+                    const double k = deformFactor, tol = 0.15 * b.shape.boundingRadius();
+                    auto wAt = [&](double x) {                                       // beam deflection at x, interpolated between nodes
+                        double f = (x + fe.L / 2) / fe.L * (double)(fe.x.size() - 1);
+                        int n0 = std::clamp((int)std::floor(f), 0, (int)fe.x.size() - 2);
+                        double t = clampd(f - n0, 0.0, 1.0);
+                        return dd.w[n0] * (1 - t) + dd.w[n0 + 1] * t;
+                    };
+                    const size_t nv = r.size();
+                    std::vector<char> onFace(nv, 0);
+                    std::vector<double> lx(nv);
+                    double xa = 1e30, xb = -1e30;
+                    int faceCount = 0;
+                    for (size_t q = 0; q < nv; ++q) {
+                        Vec2 u = p + r[q] - pj;
+                        lx[q] = dot(u, exj);
+                        double ly = dot(u, eyj);
+                        if (std::fabs(ly + fe.h / 2) < tol && std::fabs(lx[q]) <= fe.L / 2 + tol) { onFace[q] = 1; ++faceCount; xa = std::min(xa, lx[q]); xb = std::max(xb, lx[q]); }
+                    }
+                    if (faceCount >= 2 && xb - xa > 1e-3 && faceCount < (int)nv) {
+                        const Vec2 T = eyj * (k * wAt(0.5 * (xa + xb)));            // the whole body goes down with the beam
+                        size_t s0 = 0;
+                        while (onFace[s0]) ++s0;                                      // start the walk on a vertex that is not on the face
+                        std::vector<Vec2> pts;
+                        bool done = false;
+                        double firstX = 0, lastX = 0;
+                        for (size_t q = 0; q < nv; ++q) {
+                            size_t id = (s0 + q) % nv;
+                            if (onFace[id]) { if (lastX == 0 && firstX == 0) firstX = lx[id]; lastX = lx[id]; }
+                        }
+                        for (size_t q = 0; q < nv; ++q) {
+                            size_t id = (s0 + q) % nv;
+                            if (!onFace[id]) { pts.push_back(p + r[id] + T); continue; }
+                            if (done) continue;
+                            done = true;                                               // the face becomes a polyline lying on the bent beam
+                            const int NS = 14;
+                            for (int m = 0; m <= NS; ++m) {
+                                double x = firstX + (lastX - firstX) * m / NS;
+                                pts.push_back(pj + exj * x + eyj * (k * wAt(x) - fe.h / 2));
+                            }
+                        }
+                        world = pts;
+                        conformed = true;
+                    }
+                }
+                if (!conformed) {
+                    if (!squash) return false;
+                    for (const Vec2& v : r) world.push_back(p + v);
+                }
+                for (const Vec2& v : world) out.push_back(toScreen(v));
+                return true;
+            };
+            std::vector<ImVec2> sqPts;
+            if (beamDef) {                                                              // a beam: drawn bent, coloured by bending stress
+                const BeamFE& fe = liveFE[i];
+                const Deflection& dd = liveDef[i];
+                const int NN = (int)fe.x.size();
+                const double k = deformFactor, l = fe.L / (NN - 1);
+                Rot rr(a);
+                Vec2 ex = rr.apply(Vec2(1, 0)), ey = rr.apply(Vec2(0, 1));
+                std::vector<Vec2> top(NN), bot(NN);
+                std::vector<double> kap(NN, 0.0);
+                double kmax = 1e-30;
+                for (int j = 0; j < NN; ++j) {
+                    double slope = j == 0 ? (dd.w[1] - dd.w[0]) / l : (j == NN - 1 ? (dd.w[j] - dd.w[j - 1]) / l : (dd.w[j + 1] - dd.w[j - 1]) / (2 * l));
+                    Vec2 cl = p + ex * fe.x[j] + ey * (k * dd.w[j]);
+                    Vec2 nn = normalized(ey - ex * (k * slope));
+                    top[j] = cl - nn * (fe.h / 2);
+                    bot[j] = cl + nn * (fe.h / 2);
+                    if (j > 0 && j < NN - 1) { kap[j] = std::fabs(dd.w[j - 1] - 2 * dd.w[j] + dd.w[j + 1]) / (l * l); kmax = std::max(kmax, kap[j]); }
+                }
+                kap[0] = kap[1];
+                kap[NN - 1] = kap[NN - 2];
+                if (k > 1.0001 && dd.maxAbs > 0) {                                      // the undeformed outline, so the movement is visible
+                    ImVec2 g[4] = {toScreen(p - ex * (fe.L / 2) - ey * (fe.h / 2)), toScreen(p + ex * (fe.L / 2) - ey * (fe.h / 2)), toScreen(p + ex * (fe.L / 2) + ey * (fe.h / 2)), toScreen(p - ex * (fe.L / 2) + ey * (fe.h / 2))};
+                    dl->AddPolyline(g, 4, IM_COL32(150, 160, 185, 110), 1.0f, ImDrawFlags_Closed);
+                }
+                ImVec4 base = ImGui::ColorConvertU32ToFloat4(fill), hot(1.0f, 0.30f, 0.15f, 1.0f);
+                for (int j = 0; j + 1 < NN; ++j) {
+                    float t = (m.env.realistic && dd.maxAbs > 1e-15) ? (float)std::min(1.0, 0.5 * (kap[j] + kap[j + 1]) / kmax) : 0.0f;   // stress colours only in Realistic mode
+                    ImVec4 cc(base.x + (hot.x - base.x) * t, base.y + (hot.y - base.y) * t, base.z + (hot.z - base.z) * t, 1.0f);
+                    ImVec2 q[4] = {toScreen(top[j]), toScreen(top[j + 1]), toScreen(bot[j + 1]), toScreen(bot[j])};
+                    dl->AddConvexPolyFilled(q, 4, ImGui::ColorConvertFloat4ToU32(cc));
+                }
+                std::vector<ImVec2> outline;
+                for (int j = 0; j < NN; ++j) outline.push_back(toScreen(top[j]));
+                for (int j = NN - 1; j >= 0; --j) outline.push_back(toScreen(bot[j]));
+                dl->AddPolyline(outline.data(), (int)outline.size(), line, lw, ImDrawFlags_Closed);
+                dl->AddCircleFilled(c, 2.5f, IM_COL32(10, 12, 16, 220));
+            } else if (b.kind == BodyKind::Anchor) {
                 LinkKind sup = LinkKind::Spring;                                       // is this anchor a support symbol?
                 for (const Link& l : m.links)
                     if (l.a == (int)i && l.kind != LinkKind::Spring && l.kind != LinkKind::Damper && l.kind != LinkKind::Rod) { sup = l.kind; break; }
@@ -488,6 +688,10 @@ void App::drawCanvas() {
                     }
                 }
                 dl->AddLine(e0, e1, ink, sel ? 4.0f : 3.0f);
+            } else if (squashed(sqPts)) {
+                dl->AddConvexPolyFilled(sqPts.data(), (int)sqPts.size(), fill);
+                dl->AddPolyline(sqPts.data(), (int)sqPts.size(), line, lw, ImDrawFlags_Closed);
+                dl->AddCircleFilled(c, 2.5f, IM_COL32(10, 12, 16, 220));
             } else if (b.shape.isCircle()) {
                 float r = (float)(b.shape.radius * scale);
                 dl->AddCircleFilled(c, r, fill, 48);
@@ -616,7 +820,7 @@ void App::drawCanvas() {
 
     char st[160];
     double tnow = ses.hasWorld() ? ses.simTime() : (haveResults && !ses.telemetry().t.empty() ? ses.telemetry().t.back() : 0.0);
-    std::snprintf(st, sizeof st, "%s   t = %.2f s / %.1f s   %s", stateName(), tnow, m.run.duration, m.env.realistic ? "REALISTIC" : "IDEAL");
+    std::snprintf(st, sizeof st, "%s   t = %.2f s / %.1f s   %s%s", stateName(), tnow, m.run.duration, m.env.realistic ? "REALISTIC" : "IDEAL", (slowRun && state == RunState::Running) ? "   (slower than real time)" : "");
     ImVec2 ts = ImGui::CalcTextSize(st);
     ImU32 sc = state == RunState::Running ? IM_COL32(110, 230, 150, 255) : (state == RunState::Design ? IM_COL32(255, 214, 120, 255) : IM_COL32(120, 215, 255, 255));
     dl->AddText(ImVec2(canvasMax.x - ts.x - 12, canvasMin.y + 8), sc, st);
@@ -644,6 +848,64 @@ void App::drawCanvas() {
         char mb[120];
         std::snprintf(mb, sizeof mb, "Animating mode %d: %.3f Hz", modeShown + 1, modal.modes[modeShown].freqHz);
         dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 44), IM_COL32(255, 214, 120, 255), mb);
+    }
+    // ---- deformation controls and readout (hidden while recording so the video stays clean)
+    overlayMin = overlayMax = ImVec2(0, 0);
+    bool anyDeformable = false;
+    for (const Body& b : m.bodies) anyDeformable = anyDeformable || b.isDynamic();
+    if (!recording && anyDeformable) {
+        float y0 = canvasMin.y + 30;                                         // top right: nobody places objects there
+        float stripW = overlayMax.x > overlayMin.x ? overlayMax.x - overlayMin.x - 8 : 760.0f;
+        ImGui::SetCursorScreenPos(ImVec2(std::max(canvasMin.x + 10, canvasMax.x - stripW - 12), y0));
+        ImGui::BeginGroup();
+        ImGui::Checkbox("Show deformation", &showDeform);
+        if (showDeform) {
+            ImGui::SameLine();
+            ImGui::Checkbox("Realistic", &deformRealistic);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Blocks sink with the beam and their underside takes the shape of its bent surface, so the two deform together.");
+            ImGui::SameLine();
+            ImGui::Checkbox("Auto", &deformAuto);
+            ImGui::SameLine();
+            ImGui::BeginDisabled(deformAuto);
+            ImGui::SetNextItemWidth(170);
+            ImGui::SliderFloat("##exag", &deformExag, 1.0f, 1.0e7f, "exaggerate x %.0f", ImGuiSliderFlags_Logarithmic);
+            ImGui::EndDisabled();
+            const struct { const char* n; float v; } presets[] = {{"True", 1}, {"x10", 10}, {"x100", 100}, {"x1k", 1e3}, {"x10k", 1e4}, {"x100k", 1e5}};
+            for (const auto& ps : presets) {
+                ImGui::SameLine();
+                if (ImGui::SmallButton(ps.n)) { deformAuto = false; deformExag = ps.v; }
+            }
+        }
+        ImGui::EndGroup();
+        overlayMin = ImGui::GetItemRectMin();
+        overlayMax = ImGui::GetItemRectMax();
+        overlayMin.x -= 4; overlayMin.y -= 4; overlayMax.x += 4; overlayMax.y += 4;
+        if (showDeform) {
+            char db[200];
+            if (!ses.hasWorld()) {
+                const char* hint = "Run the model to see bodies bend (beams) and squash (blocks).";
+                dl->AddText(ImVec2(canvasMax.x - ImGui::CalcTextSize(hint).x - 14, y0 + 24), IM_COL32(150, 158, 178, 255), hint);
+            } else {
+                std::snprintf(db, sizeof db, "Drawn x%.0f larger than real%s", deformFactor, deformFactor > 1.5 ? "  (grey outline = undeformed)" : "  (true scale)");
+                dl->AddText(ImVec2(canvasMax.x - ImGui::CalcTextSize(db).x - 14, y0 + 24), IM_COL32(255, 214, 120, 255), db);
+                float yy = y0 + 42;
+                std::vector<size_t> order;                                           // the three most bent bodies
+                for (size_t i = 0; i < m.bodies.size() && i < liveDef.size(); ++i)
+                    if (m.bodies[i].isDynamic() && i < liveFE.size() && liveFE[i].valid) order.push_back(i);
+                std::sort(order.begin(), order.end(), [&](size_t p, size_t q) { return liveDef[p].maxAbs / liveFE[p].L > liveDef[q].maxAbs / liveFE[q].L; });
+                if (order.size() > 3) order.resize(3);
+                for (size_t i : order) {
+                    {
+                        double real = i < liveTarget.size() ? liveTarget[i] : liveDef[i].maxAbs;       // the physical value, not the eased drawing
+                        double mm = real * 1000.0;
+                        if (real < 1e-12) std::snprintf(db, sizeof db, "%s: no load from contact, drawn straight", m.bodies[i].name.c_str());
+                        else std::snprintf(db, sizeof db, "%s bends %.4g %s under contact at x = %.2f m   (L / %.0f)", m.bodies[i].name.c_str(), mm < 0.1 ? mm * 1000.0 : mm, mm < 0.1 ? "um" : "mm", liveDef[i].atX, liveFE[i].L / real);
+                        dl->AddText(ImVec2(canvasMax.x - ImGui::CalcTextSize(db).x - 14, yy), IM_COL32(200, 205, 220, 230), db);
+                        yy += 16;
+                    }
+                }
+            }
+        }
     }
     dl->PopClipRect();
     ImGui::End();

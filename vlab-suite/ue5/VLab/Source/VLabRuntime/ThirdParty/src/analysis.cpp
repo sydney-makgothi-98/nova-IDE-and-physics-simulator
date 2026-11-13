@@ -245,8 +245,12 @@ std::vector<FrfPoint> frequencyResponse(const Model& model, const FrfRequest& re
         d.driveF = req.forceAmp;
         d.driveAngleDeg = req.driveAngleDeg;
         d.driveW = 2.0 * kPi * f;
+        {   // smooth scenes (springs and dampers only) are integrated with RK4, which is accurate with a much larger step: 4x faster sweeps
+            World probe(m);
+            if (!probe.usesConstraintSolver()) m.env.dt = std::max(m.env.dt, 0.001);
+        }
         World w(m);
-        const double measure = std::max(5.0 / f, 2.0);
+        const double measure = std::min(std::max(5.0 / f, 2.0), 12.0);          // a few cycles, but never a minute at very low frequency
         const double T = req.settleSeconds + measure;
         const double dt = m.env.dt;
         const long long steps = (long long)(T / dt), measureFrom = (long long)(req.settleSeconds / dt);

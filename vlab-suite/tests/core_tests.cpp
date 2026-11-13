@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstring>
 #include "vlab/analysis.hpp"
+#include "vlab/deform.hpp"
 #include "vlab/model.hpp"
 #include "vlab/project_io.hpp"
 #include "vlab/telemetry.hpp"
@@ -451,8 +452,68 @@ static void testSystem() {
     }
 }
 
+// ------------------------------------------------------------------ deformation: beams bend, blocks squash
+static void testDeformation() {
+    std::printf("Deformation\n");
+    const double g = 9.81;
+    // a 3 m steel beam on a pin and a roller, 200 kg block resting at mid-span. The block touches the beam at its two bottom corners 1 m apart
+    // (loads P/2 at +-0.5 m), so the exact answer is  w = (P/2) a (3 L^2 - 4 a^2) / (24 EI)  with a = L/2 - 0.5.
+    {
+        Model m;
+        Body bm = withMass(makeBeam(3.0, 0.15, M("Steel"), Vec2(0, 2.4)), 0.45);
+        int beam = m.addBody(bm);
+        int blk = m.addBody(withMass(makeBox(1.0, 0.6, M("Steel"), Vec2(0, 0)), 200.0));
+        m.addSupport(LinkKind::Pin, beam, Vec2(-1.5, 2.4), 0);
+        m.addSupport(LinkKind::Roller, beam, Vec2(1.5, 2.4), 0);
+        m.updateMass();
+        m.run.duration = 3;
+        World w(m);
+        run(w, 3.0);
+        BeamFE fe;
+        fe.build(beam, w.model().bodies[beam]);
+        Deflection d;
+        beamDeflection(w, fe, d);
+        const double L = 3.0, EI = 200e9 * 0.15 * 0.15 * 0.15 / 12.0, P = 200.0 * g, q = 0.45 * g / L, a = L / 2 - 0.5;
+        double exact = (P / 2) * a * (3 * L * L - 4 * a * a) / (24 * EI) + 5 * q * L * L * L * L / (384 * EI);
+        check("beam on two supports: deflection vs theory", std::fabs(d.maxSigned - exact) < 0.03 * exact, "%.4e m vs %.4e m", d.maxSigned, exact);
+        check("beam: zero deflection at the supports", std::fabs(d.w.front()) < 1e-3 * exact && std::fabs(d.w.back()) < 1e-3 * exact, "%.2e, %.2e m", d.w.front(), d.w.back());
+        check("beam: the contact force equals the block's weight", std::fabs(d.load - P) < 0.02 * P, "%.1f N vs %.1f N", d.load, P);
+        double s = bendingStress(fe, d.w), sExact = P / 2 * a * 0.15 / 2 / (0.15 * 0.15 * 0.15 / 12.0);   // M = (P/2) a at the loads
+        check("beam: bending stress vs M c / I", std::fabs(s - sExact) < 0.1 * sExact, "%.3f MPa vs %.3f MPa", s / 1e6, sExact / 1e6);
+        double sq = bodySquash(w, blk).compression, sqExact = P * 0.6 / (200e9 * 1.0);                  // F h / (E w)
+        check("block squash = F h / (E w)", std::fabs(sq - sqExact) < 0.05 * sqExact, "%.3e m vs %.3e m", sq, sqExact);
+        Model soft = m;
+        soft.bodies[beam].mat.youngs /= 10.0;
+        World w2(soft);
+        run(w2, 3.0);
+        BeamFE fe2;
+        fe2.build(beam, w2.model().bodies[beam]);
+        Deflection d2;
+        beamDeflection(w2, fe2, d2);
+        check("ten times softer beam bends ten times more", std::fabs(d2.maxSigned / d.maxSigned - 10.0) < 0.3, "x%.2f", d2.maxSigned / d.maxSigned);
+    }
+    // a cantilever with a uniformly distributed own weight: w_tip = q L^4 / (8 EI), zero slope at the wall
+    {
+        Model m;
+        Body bm = withMass(makeBeam(2.0, 0.1, M("Aluminium"), Vec2(1.0, 0.0)), 54.0);
+        int beam = m.addBody(bm);
+        m.addSupport(LinkKind::Weld, beam, Vec2(0.0, 0.0), 0);
+        m.updateMass();
+        World w(m);
+        run(w, 1.0);
+        BeamFE fe;
+        fe.build(beam, w.model().bodies[beam]);
+        Deflection d;
+        beamDeflection(w, fe, d);
+        const double L = 2.0, EI = 69e9 * 0.1 * 0.1 * 0.1 / 12.0, q = 54.0 * g / L, exact = q * L * L * L * L / (8 * EI);
+        check("cantilever under its own weight: tip deflection", std::fabs(d.maxSigned - exact) < 0.05 * exact && d.atX > 0.9, "%.4e m vs %.4e m", d.maxSigned, exact);
+        check("cantilever: no deflection at the wall", std::fabs(d.w.front()) < 1e-3 * exact, "%.2e m", d.w.front());
+    }
+}
+
 int main() {
     std::printf("Vibration Lab Suite: validation suite\n\n");
+    testDeformation();
     testShapes();
     testSmooth();
     testPendulum();

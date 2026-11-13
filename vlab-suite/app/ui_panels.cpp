@@ -430,7 +430,11 @@ void App::drawProperties() {
             labelled("Kinetic friction (while sliding)"); c |= numField("##mk", &b.mat.muK, 0.05, "%.3f", 0, 5);
             labelled("Bounciness (0 dead .. 1 elastic)"); c |= numField("##e", &b.mat.restitution, 0.05, "%.3f", 0, 1);
             labelled("Rolling resistance"); c |= numField("##rr", &b.mat.rollRes, 0.001, "%.4f", 0, 0.5);
-            if (c) { b.mat.name = "Custom"; commit(); }
+            double gpa = b.mat.youngs / 1e9;
+            labelled("Stiffness E (GPa): how much it bends or squashes");
+            bool ce = numField("##young", &gpa, 1.0, "%.3f", 0.001, 2000);
+            if (ce) b.mat.youngs = gpa * 1e9;
+            if (c || ce) { if (c) b.mat.name = "Custom"; commit(); }
             helpMarker("Friction and bounce between two bodies are combined from both surfaces (see Environment). Frictionless floor + frictionless ball = no friction at all.");
         }
         if (b.isDynamic()) {
@@ -454,6 +458,8 @@ void App::drawProperties() {
             labelled("Direction (deg: 0 = right, 90 = down)"); c |= numField("##da", &b.driveAngleDeg, 5, "%.1f", -360, 360);
             labelled("Frequency (rad/s)"); c |= numField("##dw", &b.driveW, 0.1, "%.3f", 0, 5000);
             if (b.driveW > 0) ImGui::TextDisabled("= %.3f Hz", b.driveW / (2 * kPi));
+            labelled("Pulse length (s): 0 = continuous"); c |= numField("##dt", &b.driveT, 0.005, "%.3f", 0, 100);
+            if (b.driveT > 0) ImGui::TextDisabled("one half-sine pulse of force at the start of the run (frequency is ignored)");
             if (c) commit();
         }
         ImGui::Spacing();

@@ -1,9 +1,18 @@
-Vibration Lab Suite 1.1 - validation report
-Generated 2026-11-13 01:54
+Vibration Lab Suite 1.2 - validation report
+Generated 2026-11-13 11:35
 ======================================================================
 
 Vibration Lab Suite: validation suite
 
+Deformation
+  [PASS] beam on two supports: deflection vs theory     1.6733e-05 m vs 1.6741e-05 m
+  [PASS] beam: zero deflection at the supports          0.00e+00, 0.00e+00 m
+  [PASS] beam: the contact force equals the block's weight 1962.0 N vs 1962.0 N
+  [PASS] beam: bending stress vs M c / I                0.264 MPa vs 0.262 MPa
+  [PASS] block squash = F h / (E w)                     5.914e-09 m vs 5.886e-09 m
+  [PASS] ten times softer beam bends ten times more     x10.00
+  [PASS] cantilever under its own weight: tip deflection 9.2129e-05 m vs 9.2129e-05 m
+  [PASS] cantilever: no deflection at the wall          0.00e+00 m
 Shapes and mass properties
   [PASS] box inertia I/m = (w^2+h^2)/12                 0.416667 vs 0.416667
   [PASS] circle area and I/m = r^2/2                    area 0.785398
@@ -55,7 +64,7 @@ Analysis
   [PASS] FFT finds the 2.5 Hz tone (offset removed)     peak 2.490 Hz
   [PASS] log-decrement damping estimate                 0.0968 vs 0.0968
   [PASS] telemetry spectrum peak = damped frequency     0.610 Hz vs 0.614
-  [PASS] frequency response matches |H(w)| = 1/sqrt((k-m w^2)^2+(c w)^2) 0.16937 m/N vs 0.17035
+  [PASS] frequency response matches |H(w)| = 1/sqrt((k-m w^2)^2+(c w)^2) 0.16939 m/N vs 0.17035
 Files, determinism and the example gallery
   [PASS] save / load round trip                         6 bodies, 0 links
   [PASS] a damaged file is refused, not crashed on      "This is not a Vibration Lab Suite file (missing 'vlab' header)."
@@ -78,8 +87,13 @@ Files, determinism and the example gallery
       Spring-mass assembly                           numerical    0.0000 J  (dissipated    7.691, pos-correction   0.000, reversible contact exchange   0.000)
       Gantry crane carrying a load                   numerical   -0.0014 J  (dissipated    0.000, pos-correction   0.449, reversible contact exchange   0.000)
       Robotic arm (two joints)                       numerical    0.0091 J  (dissipated   12.759, pos-correction   0.004, reversible contact exchange   0.000)
-  [PASS] all gallery examples run 2 s without blowing up 18 examples 
+      Car suspension over speed bumps                numerical -895.3369 J  (dissipated 3338.254, pos-correction  -6.704, reversible contact exchange -2899.570)
+      Railgun firing and recoiling                   numerical    2.5920 J  (dissipated  667.827, pos-correction   0.000, reversible contact exchange   0.001)
+      Truck crossing a bridge                        numerical   -1.9558 J  (dissipated  674.417, pos-correction   0.118, reversible contact exchange -345.491)
+      Single-cylinder engine (crank-slider)          numerical  -40.6496 J  (dissipated  353.313, pos-correction   0.000, reversible contact exchange   0.000)
+      Pendulum and domino chain                      numerical   -0.3368 J  (dissipated   30.660, pos-correction   0.035, reversible contact exchange   0.488)
+  [PASS] all gallery examples run 2 s without blowing up 23 examples 
   [PASS] every example's energy ledger stays honest     worst relative error 0.0381 (Simply supported beam with a load)
   [PASS] live edit: removing friction mid-run makes the block slide speed 4.832 m/s
 
-51 of 51 checks passed
+59 of 59 checks passed

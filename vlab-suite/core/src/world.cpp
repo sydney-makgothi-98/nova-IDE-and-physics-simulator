@@ -89,7 +89,8 @@ void World::computeForces(const std::vector<BodyState>& S, double t, std::vector
         const BodyState& s = S[i];
         F[i].y += b.massKg * env.gravity;                                        // -dV/dy of the gravity term
         if (b.driveF != 0) {                                                     // harmonic push Q
-            double f = b.driveF * std::cos(b.driveW * t), a = b.driveAngleDeg * kPi / 180.0;
+            double f = b.driveT > 0 ? (t >= 0 && t < b.driveT ? b.driveF * std::sin(kPi * t / b.driveT) : 0.0) : b.driveF * std::cos(b.driveW * t);
+            double a = b.driveAngleDeg * kPi / 180.0;
             Vec2 d(f * std::cos(a), f * std::sin(a));
             F[i] += d;
             pin += dot(d, s.vel);

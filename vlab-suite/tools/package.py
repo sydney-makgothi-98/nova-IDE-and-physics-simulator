@@ -5,7 +5,7 @@ dist/VibrationLabSuite-<version>-win64.zip (a single self-contained exe plus exa
 """
 import os, shutil, subprocess, sys, zipfile, datetime
 
-VERSION = "1.1"
+VERSION = "1.2"
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 BUILD = os.path.join(ROOT, "build")

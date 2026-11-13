@@ -1,4 +1,4 @@
-VIBRATION LAB SUITE 1.0
+VIBRATION LAB SUITE 1.2
 A dynamics and vibrations sandbox, by Team NOVA
 ==================================================
 
@@ -30,6 +30,16 @@ THE FIVE-MINUTE TOUR
 4. READ      Telemetry panel (bottom): Plots (tick any channels), Energy ledger (where every joule went),
              Path and phase, Spectrum (frequency content), Statistics, Modal analysis (natural frequencies and
              mode shapes) and Frequency response (resonance curve).
+
+   NEW IN 1.2
+             Deformation   beams bend and compact bodies squash under load. Use "Show deformation" on the canvas (top right):
+                           Auto picks an exaggeration so the bending is visible, or choose True / x10 ... x100k. "Realistic"
+                           makes a block sink with the beam and its underside follow the bent surface. The Deformation tab in
+                           Telemetry plots every body's deflection, contact force, the bent shape at any instant, the bending
+                           stress and span / deflection. Set the stiffness E in Properties > Material.
+             Examples      five new Complex examples: car suspension, railgun, truck on a bridge, crank-slider engine,
+                           pendulum and domino chain. A body's push can now be a single pulse (Properties > Pulse length).
+             Graphs        steady axes (no flicker) and the Spectrum / Plots tabs open on a signal that actually moves.
 
 5. EXPORT    "Export to Excel (.xlsx) with charts" creates a workbook:
                Summary    your whole setup, the energy ledger and statistics of every channel

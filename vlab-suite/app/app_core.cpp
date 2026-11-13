@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <cstring>
 #include <fstream>
@@ -213,6 +214,11 @@ void App::startRun(bool realTime) {
     defaultPlotSelection(*this);
     specChannel = 0;
     phaseBody = 0;
+    deformPeak = 0;
+    plotPicked = false;
+    specPicked = false;
+    deformRow = -1;
+    deformBody = 0;
     state = realTime ? RunState::Running : RunState::Computing;
     statusLine = realTime ? "Running in real time. Drag a body with the mouse to disturb it." : "Computing the whole run...";
     plotAutoFit = true;
@@ -269,7 +275,17 @@ void App::advanceRun(float dt) {
                 wantCapture = true;
             }
         } else {
-            ses.advance(std::min<double>(dt * timeScale, 0.1));
+            // simulate what this frame is owed, but never spend more than ~12 ms of wall time on it: a heavy scene then runs
+            // slower than real time instead of freezing the window and falling further behind every frame
+            double want = std::min<double>(dt * timeScale, 0.1);
+            auto t0 = std::chrono::steady_clock::now();
+            slowRun = false;
+            while (want > 1e-9 && !ses.finished()) {
+                double chunk = std::min(want, 0.004);
+                ses.advance(chunk);
+                want -= chunk;
+                if (want > 1e-9 && std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() > 0.012) { slowRun = true; break; }
+            }
         }
         finishRunIfDone();
     } else if (state == RunState::Computing) {
@@ -476,6 +492,8 @@ static bool writeBmp(const std::string& path, const unsigned char* px, int w, in
     return true;
 }
 
+static int frames = 0, perfTab = 0, perfFrames0 = 0;
+static double perfT0 = 0;
 void App::autotestStep() {
     if (clickStage > 0) {                                           // finish an injected click: move, press, release
         ImGuiIO& io = ImGui::GetIO();
@@ -485,6 +503,11 @@ void App::autotestStep() {
         clickStage = 0;
         autotestWait = 2;
         return;
+    }
+    ++frames;
+    {   // VLAB_AUTOTEST_PHASE=100 jumps straight to the deformation scenario
+        static bool once = false;
+        if (!once) { once = true; if (const char* e = std::getenv("VLAB_AUTOTEST_PHASE")) autotestPhase = std::atoi(e); }
     }
     if (autotestWait > 0) { --autotestWait; return; }
     ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -523,18 +546,18 @@ void App::autotestStep() {
         case 28: design().run.duration = 40; design().run.sampleHz = 50; startRun(false); autotestPhase = 29; break;
         case 29: if (state == RunState::Done) {
                      specChannel = std::max(0, ses.telemetry().find("Main mass dx")); computeSpectrum(); computeModal(); modeShown = -1;
-                     plotSel.assign(ses.telemetry().channels.size(), 0);
+                     plotSel.assign(ses.telemetry().channels.size(), 0); plotPicked = true;
                      for (const char* n : {"Main mass dx", "Absorber dx"}) { int ch = ses.telemetry().find(n); if (ch >= 0) plotSel[ch] = 1; }
                      forceTab = 0; autotestPhase = 30; autotestWait = 4; } break;
-        case 30: shot("shot_tmd_plots.bmp"); forceTab = 3; autotestPhase = 31; autotestWait = 4; break;
-        case 31: shot("shot_spectrum.bmp"); forceTab = 5; autotestPhase = 32; autotestWait = 4; break;
+        case 30: shot("shot_tmd_plots.bmp"); forceTab = 4; autotestPhase = 31; autotestWait = 4; break;
+        case 31: shot("shot_spectrum.bmp"); forceTab = 6; autotestPhase = 32; autotestWait = 4; break;
         case 32: shot("shot_modal.bmp"); forceTab = 1; autotestPhase = 33; autotestWait = 4; break;
         case 33: shot("shot_energy.bmp"); stopRun(); frfReq.driveBody = 1; frfReq.responseBody = 1; frfReq.f0 = 0.3; frfReq.f1 = 1.6; frfReq.points = 30; frfReq.settleSeconds = 8; frfReq.driveAngleDeg = 0; frfReq.forceAmp = 5;
-                 startFrf(); forceTab = 6; autotestPhase = 34; autotestWait = 10; break;
+                 startFrf(); forceTab = 7; autotestPhase = 34; autotestWait = 10; break;
         case 34: if (!frfBusy && haveFrf) { autotestPhase = 35; autotestWait = 6; } break;
         case 35: shot("shot_frf.bmp"); autotestPhase = 36; break;
         case 36: stopRun(); loadExample(1); autotestPhase = 37; autotestWait = 6; break;
-        case 37: computeModal(); modeShown = 0; modeClock = 0.35; forceTab = 5; autotestPhase = 38; autotestWait = 6; break;
+        case 37: computeModal(); modeShown = 0; modeClock = 0.35; forceTab = 6; autotestPhase = 38; autotestWait = 6; break;
         case 38: shot("shot_design.bmp"); autotestPhase = 39; break;
         case 39: stopRun(); newDesign(); autotestPhase = 40; autotestWait = 4; break;                             // floors, beams, supports by clicking
         case 40: tool = Tool::Floor; floorLength = 8; nextAngle = 0; click(toScreen(Vec2(0, 2.5)), 0); autotestPhase = 41; break;
@@ -565,6 +588,71 @@ void App::autotestStep() {
         case 61: shot("shot_ghost.bmp"); autotestPhase = 62; break;
         case 62: tool = Tool::Select; navMenu = 3; autotestPhase = 63; autotestWait = 5; break;                    // the Examples drop-down
         case 63: shot("shot_navbar.bmp"); autotestPhase = 64; break;
+        case 100: {                                                                                                  // deformation: 200 kg block dropped on a supported beam
+            showWelcome = false;
+            newDesign();
+            Model& m = design();
+            const Material& st = *findMaterial("Steel");
+            Body bm = makeBeam(3.0, 0.15, st, Vec2(0, 2.4));
+            bm.massFromDensity = false;
+            bm.mass = 50;
+            int beam = m.addBody(bm);
+            Body bk = makeBox(1.0, 0.6, st, Vec2(0, 1.0));
+            bk.massFromDensity = false;
+            bk.mass = 200;
+            m.addBody(bk);
+            m.addSupport(LinkKind::Pin, beam, Vec2(-1.5, 2.4), 0);
+            m.addSupport(LinkKind::Roller, beam, Vec2(1.5, 2.4), 0);
+            m.run.duration = std::getenv("VLAB_AUTOTEST_DUR") ? std::atof(std::getenv("VLAB_AUTOTEST_DUR")) : 4;
+            m.updateMass();
+            needFit = true;
+            autotestPhase = std::getenv("VLAB_AUTOTEST_TIMING") ? 160 : 101;
+            autotestWait = 4;
+        } break;
+        case 101: startRun(false); autotestPhase = 102; break;
+        case 102: if (state == RunState::Done) { forceTab = std::getenv("VLAB_AUTOTEST_TAB") ? std::atoi(std::getenv("VLAB_AUTOTEST_TAB")) : 3; autotestPhase = 103; autotestWait = 6; } break;
+        case 103: shot("def_tab.bmp"); autotestPhase = 104; break;
+        case 104: stopRun(); startRun(true); autotestPhase = 105; autotestWait = 2; break;
+        case 105: { static int f0 = 0; static double t0 = 0; f0 = frames; t0 = now; autotestPhase = 106; autotestWait = 120;
+                    FILE* f = std::fopen((autotestDir + "/perf.txt").c_str(), "w"); if (f) { std::fprintf(f, "%d %f", f0, t0); std::fclose(f); } } break;
+        case 106: { shot("def_live.bmp");
+                    FILE* f = std::fopen((autotestDir + "/perf.txt").c_str(), "r"); int f0 = 0; double t0 = 0;
+                    if (f) { std::fscanf(f, "%d %lf", &f0, &t0); std::fclose(f); }
+                    f = std::fopen((autotestDir + "/perf.txt").c_str(), "w");
+                    if (f) { std::fprintf(f, "live run, frames %d, average frame %.2f ms, peak deform factor %.0f ", frames - f0, (now - t0) * 1000.0 / std::max(1, frames - f0), deformFactor); std::fclose(f); }
+                    autotestPhase = 107; autotestWait = 3; } break;
+        case 110: loadExample(2); design().run.duration = 300; design().run.sampleHz = 100; showWelcome = false; autotestPhase = 111; autotestWait = 3; break;      // perf: 5 minute run, every tab
+        case 111: startRun(false); autotestPhase = 112; break;
+        case 112: if (state == RunState::Done) { autotestPhase = 113; autotestWait = 5; perfTab = 0; } break;
+        case 113: forceTab = perfTab; perfFrames0 = frames; perfT0 = now; autotestPhase = 114; autotestWait = 80; break;
+        case 114: { FILE* f = std::fopen((autotestDir + "/perf_tabs.txt").c_str(), "a");
+                    if (f) { std::fprintf(f, "tab %d: average frame %.2f ms over %d frames ", perfTab, (now - perfT0) * 1000.0 / std::max(1, frames - perfFrames0), frames - perfFrames0); std::fclose(f); }
+                    ++perfTab; autotestPhase = perfTab < 8 ? 113 : 107; autotestWait = 2; } break;
+        case 130: showWelcome = false; loadExample(20); forceTab = 3; autotestPhase = 131; autotestWait = 4; break;                   // the five new examples
+        case 131: startRun(true); autotestPhase = 132; autotestWait = 430; break;
+        case 132: shot("ex_bridge.bmp"); autotestPhase = 133; break;
+        case 133: stopRun(); loadExample(18); forceTab = 0; autotestPhase = 134; autotestWait = 4; break;
+        case 134: startRun(true); autotestPhase = 135; autotestWait = 200; break;
+        case 135: shot("ex_car.bmp"); autotestPhase = 136; break;
+        case 136: stopRun(); loadExample(19); startRun(true); autotestPhase = 137; autotestWait = 45; break;
+        case 137: shot("ex_rail.bmp"); autotestPhase = 138; break;
+        case 138: stopRun(); loadExample(21); startRun(true); autotestPhase = 139; autotestWait = 200; break;
+        case 139: shot("ex_engine.bmp"); autotestPhase = 140; break;
+        case 140: stopRun(); loadExample(22); startRun(true); autotestPhase = 141; autotestWait = 420; break;
+        case 141: shot("ex_domino.bmp"); autotestPhase = 107; autotestWait = 3; break;
+        case 150: showWelcome = false; loadExample(13); autotestPhase = 151; autotestWait = 4; break;                                // flicker check
+        case 151: startRun(false); autotestPhase = 152; break;
+        case 152: if (state == RunState::Done) { forceTab = 7; autotestPhase = 153; autotestWait = 8; } break;
+        case 153: shot("flick_frf_a.bmp"); autotestPhase = 154; autotestWait = 9; break;
+        case 154: shot("flick_frf_b.bmp"); forceTab = 2; autotestPhase = 155; autotestWait = 9; break;
+        case 155: shot("flick_path_a.bmp"); autotestPhase = 156; autotestWait = 9; break;
+        case 156: shot("flick_path_b.bmp"); forceTab = 4; autotestPhase = 157; autotestWait = 9; break;
+        case 157: shot("flick_spec_a.bmp"); autotestPhase = 158; autotestWait = 9; break;
+        case 158: shot("flick_spec_b.bmp"); autotestPhase = 107; autotestWait = 3; break;
+        case 160: startRun(true); perfT0 = now; perfTab = 0; autotestPhase = 161; break;                                                // timing of the sag after contact
+        case 161: { static const double at[] = {0.30, 0.55, 0.95, 1.60, 3.20};
+                    if (now - perfT0 >= at[perfTab]) { char nm[48]; std::snprintf(nm, sizeof nm, "timing_%d.bmp", perfTab); pendingShot = nm; if (++perfTab >= 5) autotestPhase = 107; } } break;
+        case 107: say("autotest finished"); autotestQuit = true; autotestPhase = 108; break;
         case 64: say("autotest finished"); autotestQuit = true; autotestPhase = 65; break;
         default: break;
     }
