@@ -496,7 +496,7 @@ void App::drawCanvas() {
             dl->AddCircleFilled(sa, 6, IM_COL32(30, 30, 30, 255));
             dl->AddCircle(sa, 6, sel ? col : IM_COL32(235, 235, 240, 255), 16, 2.0f);
         }
-        if (ses.hasWorld() && l.kind != LinkKind::Spring && l.kind != LinkKind::Damper && l.kind != LinkKind::Rod) {   // reaction force arrow at a joint
+        if (showReactions && ses.hasWorld() && l.kind != LinkKind::Spring && l.kind != LinkKind::Damper && l.kind != LinkKind::Rod) {   // reaction force arrow at a joint
             LinkReading rd = ses.world()->link((int)i);
             if (rd.force > 1e-6) drawArrow(dl, sa, ImVec2(sa.x + (float)(rd.rx / reacRef) * 70.0f, sa.y + (float)(rd.ry / reacRef) * 70.0f), IM_COL32(255, 170, 60, 230));
         }

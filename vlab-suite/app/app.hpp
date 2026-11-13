@@ -77,6 +77,7 @@ struct App {
     void applyTheme();                   // push the theme into ImGui and ImPlot
     void setTheme(bool dark);
     bool showGridNumbers = true;
+    bool showReactions = false;          // orange reaction-force arrows at joints and supports (off: they clutter a running scene)
     ImVec2 toolbarMin{0, 0}, toolbarMax{0, 0};   // the Run / Pause / Stop strip on the canvas (clicks there are not canvas clicks)
     // data extraction settings (Data panel)
     std::string exportBase;              // file name, empty: the design name

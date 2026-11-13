@@ -147,6 +147,7 @@ void App::drawMenuBar() {
         ImGui::MenuItem("Contact points", nullptr, &showContacts);
         ImGui::MenuItem("Legend", nullptr, &showLabels);
         ImGui::MenuItem("Velocity arrows", nullptr, &showVectors);
+        ImGui::MenuItem("Reaction force arrows", nullptr, &showReactions);
         ImGui::Separator();
         if (ImGui::MenuItem("Fit view to the design", "Home")) needFit = true;
         if (ImGui::MenuItem("Reset view")) { viewCenter = Vec2(0, 0); scale = 70; }
@@ -1057,6 +1058,7 @@ void App::drawGrid() {
     ImGui::Checkbox("Legend (bottom left)", &showLabels);
     ImGui::Checkbox("Contact points", &showContacts);
     ImGui::Checkbox("Velocity arrows", &showVectors);
+    ImGui::Checkbox("Reaction force arrows (joints, supports)", &showReactions);
     ImGui::Separator();
     ImGui::TextUnformatted("View");
     if (ImGui::Button("Fit the view to the design", ImVec2(-1, 0))) needFit = true;
