@@ -422,9 +422,15 @@ void App::drawSidebar() {
             ImGui::DragFloat("##bt", &beamThick, 0.01f, 0.02f, 2.0f, "%.3f");
             break;
         case Tool::Floor:
-            labelled("Length (m)");
-            ImGui::SetNextItemWidth(-1);
-            ImGui::DragFloat("##fl", &floorLength, 0.05f, 0.2f, 60.0f, "%.2f");
+            {
+                bool inf = floorLength >= 5000.0f;
+                if (ImGui::Checkbox("Indefinite length (as long as the eye can see)", &inf)) floorLength = inf ? 20000.0f : 8.0f;
+                if (!inf) {
+                    labelled("Length (m)");
+                    ImGui::SetNextItemWidth(-1);
+                    ImGui::DragFloat("##fl", &floorLength, 0.05f, 0.2f, 60.0f, "%.2f");
+                }
+            }
             labelled("Surface material");
             materialCombo("##fm", &floorMaterial);
             ImGui::TextDisabled("friction mu_s %.2f, mu_k %.2f, bounce e %.2f", lib[floorMaterial].muS, lib[floorMaterial].muK, lib[floorMaterial].restitution);
@@ -655,7 +661,13 @@ void App::drawProperties() {
                     if (ImGui::SliderInt("##sides", &sd, 3, 12)) { b.shape.sides = sd; c = true; }
                     break;
                 }
-                case ShapePreset::Line: labelled("Length (m)"); c |= numField("##ll", &b.shape.w, 0.1, "%.3f", 0.05, 200); break;
+                case ShapePreset::Line: {
+                    bool inf = b.shape.w >= 5000.0;
+                    if (ImGui::Checkbox("Indefinite length (as long as the eye can see)", &inf)) { b.shape.w = inf ? 20000.0 : 10.0; c = true; }
+                    if (!inf) { labelled("Length (m)"); c |= numField("##ll", &b.shape.w, 0.1, "%.3f", 0.05, 4000); }
+                    else ImGui::TextDisabled("Nothing can fall off either end.");
+                    break;
+                }
                 default: labelled("Leg along x (m)"); c |= numField("##ww", &b.shape.w, 0.1, "%.3f", 0.02, 20); labelled("Leg along y (m)"); c |= numField("##wh", &b.shape.h, 0.1, "%.3f", 0.02, 20); break;
             }
             if (c) commit();
@@ -769,6 +781,16 @@ void App::drawProperties() {
             labelled("Velocity x (m/s)"); c |= numField("##vx", &b.vel.x, 0.1, "%.3f", -500, 500);
             labelled("Velocity y (m/s)"); c |= numField("##vy", &b.vel.y, 0.1, "%.3f", -500, 500);
             labelled("Spin (rad/s)"); c |= numField("##om", &b.omega, 0.1, "%.3f", -500, 500);
+            ImGui::TextUnformatted("Guide (like a real tuned mass damper on a rail)");
+            {
+                const float gw = (ImGui::GetContentRegionAvail().x - 2 * ImGui::GetStyle().ItemSpacing.x) / 3;
+                if (ImGui::Button("Vertical guide", ImVec2(gw, 0))) { b.lockX = false; b.lockY = false; b.lockRot = true; b.lockX = true; c = true; }
+                ImGui::SameLine();
+                if (ImGui::Button("Horizontal guide", ImVec2(gw, 0))) { b.lockX = false; b.lockY = true; b.lockRot = true; c = true; }
+                ImGui::SameLine();
+                if (ImGui::Button("No guide", ImVec2(gw, 0))) { b.lockX = b.lockY = b.lockRot = false; c = true; }
+            }
+            ImGui::TextDisabled("A mass hung on springs with nothing guiding it tilts and topples, as in real life. A guide keeps it upright.");
             if (ImGui::Checkbox("Lock x (slides up/down only)", &b.lockX)) c = true;
             if (ImGui::Checkbox("Lock y (slides left/right only)", &b.lockY)) c = true;
             if (ImGui::Checkbox("Lock rotation", &b.lockRot)) c = true;
@@ -828,6 +850,51 @@ void App::drawProperties() {
         }
         if (l.kind == LinkKind::Weld) ImGui::TextDisabled("Holds the point AND the relative angle (%.1f deg).", l.refAngle * 180.0 / kPi);
         if (l.kind == LinkKind::Roller) ImGui::TextDisabled("The beam's point is held on a line: it can slide along the support's axis and rotate.");
+        if (l.kind == LinkKind::Spring || l.kind == LinkKind::Damper || l.kind == LinkKind::Rod) {
+            ImGui::Separator();
+            ImGui::TextUnformatted("Where it attaches and which way it runs");
+            const Vec2 wa = m.worldPoint(l.a, l.la), wb = m.worldPoint(l.b, l.lb), dd = wb - wa;
+            double ang = std::atan2(dd.y, dd.x) * 180.0 / kPi;
+            if (ang < 0) ang += 360.0;
+            ImGui::TextDisabled("Now: %.1f deg from the first end to the second, %.3f m long  (0 = right, 90 = down)", ang, length(dd));
+            static int keepSecond = 0;
+            ImGui::TextUnformatted("Keep fixed:");
+            ImGui::SameLine();
+            ImGui::RadioButton("First end", &keepSecond, 0);
+            ImGui::SameLine();
+            ImGui::RadioButton("Second end", &keepSecond, 1);
+            ImGui::TextDisabled("The other end slides along the new direction to the edge of its body.");
+            const float qw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2;
+            bool moved = false;
+            if (ImGui::Button("Make it vertical", ImVec2(qw, 0))) moved = reorientLink(selLink, Vec2(0, 1), keepSecond == 0);
+            ImGui::SameLine();
+            if (ImGui::Button("Make it horizontal", ImVec2(qw, 0))) moved = reorientLink(selLink, Vec2(1, 0), keepSecond == 0);
+            static float setAng = 90.0f;
+            ImGui::SetNextItemWidth(110);
+            ImGui::DragFloat("##setang", &setAng, 1.0f, -360.0f, 360.0f, "%.0f deg");
+            ImGui::SameLine();
+            if (ImGui::Button("Set this angle")) moved = reorientLink(selLink, Vec2(std::cos(setAng * kPi / 180.0), std::sin(setAng * kPi / 180.0)), keepSecond == 0);
+            if (moved) c = true;
+            // the two attachment points, in each body's own frame (centre = 0, 0)
+            labelled("First end on its body: x, y (m)");
+            {
+                const float hw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2;
+                ImGui::SetNextItemWidth(hw);
+                if (ImGui::InputDouble("##lax", &l.la.x, 0.05, 0.25, "%.3f")) { m.refreshAutoRest(); c = true; }
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(hw);
+                if (ImGui::InputDouble("##lay", &l.la.y, 0.05, 0.25, "%.3f")) { m.refreshAutoRest(); c = true; }
+            }
+            labelled("Second end on its body: x, y (m)");
+            {
+                const float hw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2;
+                ImGui::SetNextItemWidth(hw);
+                if (ImGui::InputDouble("##lbx", &l.lb.x, 0.05, 0.25, "%.3f")) { m.refreshAutoRest(); c = true; }
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(hw);
+                if (ImGui::InputDouble("##lby", &l.lb.y, 0.05, 0.25, "%.3f")) { m.refreshAutoRest(); c = true; }
+            }
+        }
         if (l.kind != LinkKind::Spring && l.kind != LinkKind::Damper) {
             if (ImGui::Checkbox("The joined bodies may collide with each other", &l.collideConnected)) c = true;
         }
@@ -1191,6 +1258,15 @@ void App::drawData() {
         ImGui::SameLine();
         if (ImGui::SmallButton("Show in folder")) openInShell(lastExportPath, true);
     }
+    ImGui::Separator();
+
+    ImGui::TextUnformatted("Schematic diagram");
+    wrapDisabled("The design as a labelled figure: shapes, springs, dampers, supports and loads, each named with a leader line. Saved as an SVG, which opens in a browser, Word or PowerPoint and stays sharp at any size.");
+    ImGui::Checkbox("Names on the parts", &schemNames);
+    ImGui::Checkbox("Their values (mass, k, c, loads)", &schemValues);
+    ImGui::Checkbox("Arrowheads on the label lines", &schemArrows);
+    ImGui::Checkbox("Show the applied loads", &schemLoads);
+    if (ImGui::Button("Save the schematic (.svg)", ImVec2(-1, 34))) exportSchematic();
     ImGui::Separator();
 
     ImGui::TextUnformatted("Screen recording");

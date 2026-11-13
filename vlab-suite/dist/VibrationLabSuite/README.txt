@@ -58,6 +58,12 @@ THE FIVE-MINUTE TOUR
                            supports, connections, examples); SETTINGS (Physical settings, Object properties, Simulation setup, Grid
                            settings, Data extraction: each opens in place under its button); VIEW (light or dark). The open design and
                            Save sit at the bottom. Run, Pause, Stop, Step and Compute are along the top of the canvas.
+             Connections   springs, dampers, rods and joints attach where you choose: click a body near its edge and the point lands ON the
+                           edge. A small box (appears when you pick a connection tool) sets where it attaches (Edge, Key points = corners /
+                           middle / thirds, Centre, Exact) and which way it runs (Free, Perpendicular to the face, Horizontal, Vertical or
+                           an angle), with a live preview. Spring on the left and damper on the right of a mass, like a textbook figure.
+             Schematic     Data > Schematic diagram saves the design as a labelled figure (SVG): outlined shapes, spring and damper symbols,
+                           supports, load arrows, and every part named with a leader line. Opens in a browser, Word or PowerPoint.
              Theme         View > Light theme / Dark theme, or the button under the logo. The choice is remembered.
              Graphs        steady axes (no flicker) and the Spectrum / Plots tabs open on a signal that actually moves.
 
@@ -96,3 +102,5 @@ HONEST LIMITS
 UNREAL ENGINE 5
 ---------------
 The folder UnrealPlugin contains a plugin that runs the same engine inside Unreal. It is a beta scaffold: see its README.
+
+Re-orienting a connection: select a placed spring, damper or rod, then in Object properties use Make it vertical / Make it horizontal / Set this angle (choose which end stays fixed), or edit the end coordinates. While a connection tool is active, the box on the canvas sets Direction (Free / Perpendicular / Horizontal / Vertical / Angle) before you place it.

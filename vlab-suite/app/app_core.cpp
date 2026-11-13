@@ -11,6 +11,7 @@
 #include "encoder.hpp"
 #include "imgui_internal.h"
 #include "report.hpp"
+#include "schematic.hpp"
 
 namespace vlab {
 
@@ -333,6 +334,25 @@ void App::advanceRun(float dt) {
 // ====================================================================== exporting
 // ====================================================================== data extraction settings
 // What the Data panel remembers between sessions: where files go, the name, which formats to save by themselves.
+// The design as a labelled figure (SVG): shapes, springs, dampers, supports and loads, each named with a leader line.
+void App::exportSchematic() {
+    ensureDirectory(exportsDir);
+    SchematicOptions o;
+    o.names = schemNames;
+    o.values = schemValues;
+    o.arrowheads = schemArrows;
+    o.loads = schemLoads;
+    o.title = design().name;
+    std::string base = safeName(exportBase.empty() ? design().name : exportBase);
+    if (exportStamp) base += "_" + stamp();
+    const std::string p = exportsDir + "\\" + base + "_schematic.svg";
+    std::string err;
+    if (!exportSchematicSvg(p, design(), o, &err)) { say("Could not save the schematic: " + err, true); return; }
+    lastExportPath = p;
+    say("Schematic saved: " + p);
+    openInShell(p, false);
+}
+
 void App::saveDataSettings() {
     std::ofstream f(docsDir + "\\data_settings.txt");
     f << "exports=" << exportsDir << "\n"
@@ -789,6 +809,33 @@ void App::autotestStep() {
         case 233: { FILE* f = std::fopen((autotestDir + "/clickrun.txt").c_str(), "w"); if (f) { std::fprintf(f, "after clicking Run: state %s, t = %.3f s", stateName(), ses.hasWorld() ? ses.simTime() : 0.0); std::fclose(f); }
                     autotestPhase = 234; autotestWait = 20; } break;
         case 234: shot("click_run.bmp"); autotestPhase = 107; autotestWait = 3; break;
+        case 240: showWelcome = false; autotestPhase = 241; autotestWait = 12; break;                                                      // connections at chosen points
+        case 241: { newDesign(); Model& m = design();
+                    Body big = makeBox(3.0, 1.2, *findMaterial("Steel"), Vec2(0, 1.0)); big.massFromDensity = false; big.mass = 60; big.name = "Structural mass"; m.addBody(big);
+                    Body sm = makeBox(1.6, 0.6, *findMaterial("Steel"), Vec2(0, -1.4)); sm.massFromDensity = false; sm.mass = 8; sm.name = "Damper mass"; m.addBody(sm);
+                    m.addBody(makeFloor(7, 0, *findMaterial("Concrete"), Vec2(0, 2.6)));
+                    needFit = true; autotestPhase = 242; autotestWait = 14; } break;
+        case 242: tool = Tool::Spring; linkAttach = 1; linkDir = 1; click(toScreen(Vec2(-0.7, 0.43)), 0); autotestPhase = 243; autotestWait = 8; break;
+        case 243: shot("conn_prompt.bmp"); click(toScreen(Vec2(-0.6, -1.15)), 0); autotestPhase = 244; autotestWait = 8; break;
+        case 244: tool = Tool::Damper; click(toScreen(Vec2(0.7, 0.43)), 0); autotestPhase = 245; autotestWait = 8; break;
+        case 245: click(toScreen(Vec2(0.6, -1.15)), 0); autotestPhase = 246; autotestWait = 8; break;
+        case 246: tool = Tool::Spring; click(toScreen(Vec2(-1.0, 1.55)), 0); autotestPhase = 247; autotestWait = 8; break;
+        case 247: click(toScreen(Vec2(-1.0, 2.58)), 0); autotestPhase = 248; autotestWait = 8; break;
+        case 248: tool = Tool::Damper; click(toScreen(Vec2(1.0, 1.55)), 0); autotestPhase = 249; autotestWait = 8; break;
+        case 249: click(toScreen(Vec2(1.0, 2.58)), 0); autotestPhase = 250; autotestWait = 8; break;
+        case 250: tool = Tool::Select; { FILE* f = std::fopen((autotestDir + "/conn.txt").c_str(), "w");
+                    if (f) { std::fprintf(f, "links %d: ", (int)design().links.size()); for (const Link& l : design().links) std::fprintf(f, "[kind %d a%d b%d  la(%.2f,%.2f) lb(%.2f,%.2f)] ", (int)l.kind, l.a, l.b, l.la.x, l.la.y, l.lb.x, l.lb.y); std::fclose(f); } }
+                  autotestPhase = 251; autotestWait = 6; break;
+        case 251: shot("conn_done.bmp"); autotestPhase = 107; autotestWait = 3; break;
+        case 260: showWelcome = false; autotestPhase = 261; autotestWait = 12; break;                                                      // re-orient a placed connection
+        case 261: { newDesign(); Model& m = design(); Body bx = makeBox(1.6, 0.6, *findMaterial("Steel"), Vec2(0, 0)); bx.massFromDensity = false; bx.mass = 20; m.addBody(bx);
+                    int fl = m.addBody(makeFloor(6, 0, *findMaterial("Concrete"), Vec2(0, 2.0)));
+                    int dm = m.addLink(LinkKind::Damper, 0, fl, Vec2(0.5, 0.3), Vec2(1.7, 2.0)); (void)dm;                              // diagonal, like the screenshot
+                    selLink = 0; selBody = -1; sideOpen = 1; needFit = true; autotestPhase = 262; autotestWait = 14; } break;
+        case 262: shot("orient_before.bmp"); reorientLink(0, Vec2(0, 1), true); edited(); autotestPhase = 263; autotestWait = 8; break;
+        case 263: { const Link& l = design().links[0]; FILE* f = std::fopen((autotestDir + "/orient.txt").c_str(), "w");
+                    if (f) { std::fprintf(f, "after Make it vertical: la(%.3f,%.3f) lb(%.3f,%.3f)", l.la.x, l.la.y, l.lb.x, l.lb.y); std::fclose(f); }
+                    shot("orient_after.bmp"); autotestPhase = 107; autotestWait = 3; } break;
         case 107: say("autotest finished"); autotestQuit = true; autotestPhase = 108; break;
         case 64: say("autotest finished"); autotestQuit = true; autotestPhase = 65; break;
         default: break;
@@ -842,6 +889,8 @@ void App::frame(float dt) {
     if (pageDashboard) drawDashboard();
     else drawCanvas();
     drawSidebar();
+    if (ImGuiWindow* sw = ImGui::FindWindowByName("Sidebar"))
+        if (sw->DockNode) sw->DockNode->LocalFlags |= ImGuiDockNodeFlags_HiddenTabBar;      // re-applied every frame: ImGui does not store it in the layout file
     if (!pageDashboard) drawTelemetry();
     if (showWelcome) drawWelcome();
     if (showAbout) drawAbout();

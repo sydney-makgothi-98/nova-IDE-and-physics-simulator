@@ -107,7 +107,9 @@ void App::fitView() {
         } else {
             Rot rr(b.angle);
             for (const Vec2& v : b.shape.verts) {
-                Vec2 q = b.pos + rr.apply(v);
+                Vec2 vv = v;
+                if (b.shape.preset == ShapePreset::Line && b.shape.w >= 5000.0) vv = v * (12.0 / b.shape.w);   // an indefinite floor: frame only the middle 24 m
+                Vec2 q = b.pos + rr.apply(vv);
                 x0 = std::min(x0, q.x); x1 = std::max(x1, q.x);
                 y0 = std::min(y0, q.y); y1 = std::max(y1, q.y);
             }
@@ -241,6 +243,155 @@ static void drawArrow(ImDrawList* dl, ImVec2 a, ImVec2 b, ImU32 col) {
     dl->AddTriangleFilled(b, b - u * 8.0f + n * 4.0f, b - u * 8.0f - n * 4.0f, col);
 }
 
+// ====================================================================== connection points
+// The point of a body's outline nearest to w (world), the outward normal there, and which edge / how far along it.
+static Vec2 nearestBoundary(const Body& b, Vec2 p, double a, Vec2 w, Vec2* nrm, int* edgeIndex) {
+    Rot r(a);
+    if (b.kind == BodyKind::Anchor) { if (nrm) *nrm = Vec2(0, -1); if (edgeIndex) *edgeIndex = -1; return p; }
+    if (b.shape.isCircle()) {
+        Vec2 d = w - p;
+        double L = length(d);
+        Vec2 u = L > 1e-9 ? d * (1.0 / L) : Vec2(0, -1);
+        if (nrm) *nrm = u;
+        if (edgeIndex) *edgeIndex = -1;
+        return p + u * b.shape.radius;
+    }
+    const size_t n = b.shape.verts.size();
+    Vec2 best = p, bn(0, -1);
+    double bd = 1e30;
+    int bi = 0;
+    for (size_t i = 0; i < n; ++i) {
+        Vec2 va = p + r.apply(b.shape.verts[i]), vb = p + r.apply(b.shape.verts[(i + 1) % n]);
+        Vec2 ab = vb - va;
+        double L2 = lengthSq(ab), t = L2 > 0 ? clampd(dot(w - va, ab) / L2, 0.0, 1.0) : 0.0;
+        Vec2 q = va + ab * t;
+        double d = length(w - q);
+        if (d < bd) { bd = d; best = q; bi = (int)i; if (i < b.shape.normals.size()) bn = r.apply(b.shape.normals[i]); }
+    }
+    if (b.shape.preset == ShapePreset::Line) { bn = r.apply(Vec2(0, -1)); if (dot(bn, w - best) < 0) bn = bn * -1.0; }
+    if (nrm) *nrm = bn;
+    if (edgeIndex) *edgeIndex = bi;
+    return best;
+}
+
+// where the infinite line P1 + t d crosses the outline of a body (pose p, angle a)
+static void lineBodyHits(const Body& b, Vec2 p, double a, Vec2 P1, Vec2 d, std::vector<Vec2>& hits) {
+    if (b.shape.isCircle()) {
+        Vec2 f = P1 - p;
+        double B = dot(f, d), C = dot(f, f) - b.shape.radius * b.shape.radius, disc = B * B - C;
+        if (disc >= 0) { double sq = std::sqrt(disc); hits.push_back(P1 + d * (-B - sq)); hits.push_back(P1 + d * (-B + sq)); }
+        return;
+    }
+    Rot r(a);
+    const size_t nv = b.shape.verts.size();
+    for (size_t i = 0; i < nv; ++i) {
+        Vec2 A = p + r.apply(b.shape.verts[i]), Bv = p + r.apply(b.shape.verts[(i + 1) % nv]), e = Bv - A;
+        double den = cross(d, e);
+        if (std::fabs(den) < 1e-12) continue;
+        double t = cross(A - P1, e) / den, sidx = cross(A - P1, d) / den;
+        if (sidx >= -1e-9 && sidx <= 1.0 + 1e-9) hits.push_back(P1 + d * t);
+    }
+}
+
+bool App::reorientLink(int li, Vec2 axis, bool keepFirst) {
+    Model& m = design();
+    if (li < 0 || li >= (int)m.links.size() || lengthSq(axis) < 0.25) return false;
+    Link& l = m.links[li];
+    axis = normalized(axis);
+    const int fixedBody = keepFirst ? l.a : l.b, movBody = keepFirst ? l.b : l.a;
+    Vec2& fixedLocal = keepFirst ? l.la : l.lb;
+    Vec2& movLocal = keepFirst ? l.lb : l.la;
+    const Body& mb = m.bodies[movBody];
+    if (mb.kind == BodyKind::Anchor) { say("That end is a fixed point: keep the other end fixed instead, or move the point.", true); return false; }
+    const Vec2 P = m.worldPoint(fixedBody, fixedLocal), cur = m.worldPoint(movBody, movLocal);
+    std::vector<Vec2> hits;
+    lineBodyHits(mb, mb.pos, mb.angle, P, axis, hits);
+    if (hits.empty()) { say("The line from the fixed end in that direction misses the other body.", true); return false; }
+    Vec2 best = hits[0];
+    for (const Vec2& h : hits) if (length(h - cur) < length(best - cur)) best = h;
+    movLocal = Rot(mb.angle).applyInv(best - mb.pos);
+    if (l.kind == LinkKind::Rod) l.L0 = std::max(0.05, length(m.worldPoint(l.b, l.lb) - m.worldPoint(l.a, l.la)));
+    m.refreshAutoRest();
+    return true;
+}
+
+Vec2 App::attachPointFor(int body, Vec2 w, Vec2* normal) const {
+    const Body& b = ses.design().bodies[body];
+    Vec2 p;
+    double a;
+    bodyPose(body, p, a);
+    int ei = 0;
+    Vec2 n(0, -1);
+    Vec2 edge = nearestBoundary(b, p, a, w, &n, &ei);
+    if (normal) *normal = n;
+    if (b.kind == BodyKind::Anchor) return p;
+    switch (linkAttach) {
+        case 0: return w;                                                          // exactly where the click is
+        case 3: return p;                                                          // the centre
+        case 2: {                                                                  // key points: corners, middle and thirds of an edge (circles: every 45 degrees)
+            Rot r(a);
+            const double thr = 18.0 / scale;
+            Vec2 bestK = edge;
+            double bd = thr;
+            auto consider = [&](Vec2 k) { double d = length(k - edge); if (d < bd) { bd = d; bestK = k; } };
+            if (b.shape.isCircle()) {
+                for (int k = 0; k < 8; ++k) consider(p + r.apply(Vec2(std::cos(k * kPi / 4), std::sin(k * kPi / 4)) * b.shape.radius));
+            } else {
+                const size_t nv = b.shape.verts.size();
+                Vec2 va = p + r.apply(b.shape.verts[ei]), vb = p + r.apply(b.shape.verts[(ei + 1) % nv]);
+                consider(va); consider(vb);
+                consider(va + (vb - va) * 0.5); consider(va + (vb - va) * (1.0 / 3.0)); consider(va + (vb - va) * (2.0 / 3.0));
+            }
+            return bestK;
+        }
+        default: return edge;                                                      // the nearest point of the outline
+    }
+}
+
+Vec2 App::linkAxis() const {
+    switch (linkDir) {
+        case 1: return lengthSq(linkFirstNormal) > 0.25 ? normalized(linkFirstNormal) : Vec2(0, 1);
+        case 2: return Vec2(1, 0);
+        case 3: return Vec2(0, 1);
+        case 4: return Vec2(std::cos(linkAngle * kPi / 180.0), std::sin(linkAngle * kPi / 180.0));
+        default: return Vec2(0, 0);
+    }
+}
+
+bool App::constrainedSecond(int body, Vec2 mw, Vec2& out) const {
+    Vec2 d = linkAxis();
+    if (linkFirst < 0 || lengthSq(d) < 0.25) { out = attachPointFor(body, mw, nullptr); return true; }
+    const Body& b = ses.design().bodies[body];
+    Vec2 p;
+    double a;
+    bodyPose(body, p, a);
+    if (b.kind == BodyKind::Anchor) { out = p; return true; }
+    const Vec2 P1 = linkFirstWorld;
+    std::vector<Vec2> hits;
+    lineBodyHits(b, p, a, P1, d, hits);
+    if (hits.empty()) { out = attachPointFor(body, mw, nullptr); return false; }   // the line misses it: attach freely
+    out = hits[0];
+    for (const Vec2& h : hits) if (length(h - mw) < length(out - mw)) out = h;
+    return true;
+}
+
+int App::pickBodyForLink(Vec2 w) const {
+    int id = pickBody(w);
+    if (id >= 0) return id;
+    const Model& m = ses.design();
+    double bd = 12.0 / scale;
+    int best = -1;
+    for (int i = 0; i < (int)m.bodies.size(); ++i) {
+        Vec2 p;
+        double a;
+        if (!bodyPose(i, p, a)) continue;
+        Vec2 q = nearestBoundary(m.bodies[i], p, a, w, nullptr, nullptr);
+        double d = length(w - q);
+        if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+}
+
 // ====================================================================== interaction
 void App::canvasInteract(ImVec2 mp, bool hovered) {
     ImGuiIO& io = ImGui::GetIO();
@@ -288,15 +439,22 @@ void App::canvasInteract(ImVec2 mp, bool hovered) {
         } else if (supportTool) {
             placeSupport(mw);
         } else if (linkTool) {
-            int id = pickBody(mw);
+            int id = pickBodyForLink(mw);
             if (id < 0) { linkFirst = -1; }
             else if (linkFirst < 0) {
                 linkFirst = id;
                 Vec2 p;
                 double a;
                 bodyPose(id, p, a);
-                linkFirstLocal = Rot(a).applyInv(mw - p);
-                if (length(linkFirstLocal) < 0.25 * std::max(0.2, m.bodies[id].shape.boundingRadius())) linkFirstLocal = Vec2();   // near the centre: attach to the centre
+                const bool joint = tool == Tool::Pin || tool == Tool::Weld;
+                const int saveMode = linkAttach;
+                if (joint && linkAttach == 1) linkAttach = 0;                      // a hinge goes exactly where you click
+                Vec2 n1;
+                Vec2 P1 = attachPointFor(id, mw, &n1);
+                linkAttach = saveMode;
+                linkFirstWorld = P1;
+                linkFirstNormal = n1;
+                linkFirstLocal = Rot(a).applyInv(P1 - p);
             } else if (id == linkFirst) {
                 say("Click a different body for the other end.");
             } else if (canEditStructure()) {
@@ -304,10 +462,19 @@ void App::canvasInteract(ImVec2 mp, bool hovered) {
                 double aa, ab;
                 bodyPose(linkFirst, pa, aa);
                 bodyPose(id, pb, ab);
-                Vec2 wa = pa + Rot(aa).apply(linkFirstLocal), wb = mw;
-                if (length(Rot(ab).applyInv(mw - pb)) < 0.25 * std::max(0.2, m.bodies[id].shape.boundingRadius())) wb = pb;
+                (void)ab;
                 LinkKind k = tool == Tool::Spring ? LinkKind::Spring : tool == Tool::Damper ? LinkKind::Damper : tool == Tool::Rod ? LinkKind::Rod : tool == Tool::Weld ? LinkKind::Weld : LinkKind::Pin;
-                if (k == LinkKind::Pin || k == LinkKind::Weld) wa = wb;
+                const bool joint = k == LinkKind::Pin || k == LinkKind::Weld;
+                Vec2 wa = pa + Rot(aa).apply(linkFirstLocal), wb;
+                if (joint) {
+                    const int saveMode = linkAttach;
+                    if (linkAttach == 1) linkAttach = 0;
+                    wb = attachPointFor(id, mw, nullptr);
+                    linkAttach = saveMode;
+                    wa = wb;
+                } else {
+                    constrainedSecond(id, mw, wb);                                  // under the chosen direction: free, perpendicular, horizontal, vertical or at an angle
+                }
                 pushUndo();
                 int li = m.addLink(k, linkFirst, id, wa, wb);
                 if (li < 0) say("Those two cannot be connected (two fixed things, or the same connection already exists).", true);
@@ -426,7 +593,7 @@ void App::drawCanvas() {
     ImGui::SetNextItemAllowOverlap();                                         // the Run buttons and the deformation controls sit on top of the canvas and must get their clicks
     ImGui::InvisibleButton("canvas", size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
     bool hovered = ImGui::IsItemHovered();
-    if (hovered && (ImGui::IsMouseHoveringRect(overlayMin, overlayMax, false) || ImGui::IsMouseHoveringRect(toolbarMin, toolbarMax, false))) hovered = false;   // the deformation controls sit on the canvas
+    if (hovered && (ImGui::IsMouseHoveringRect(overlayMin, overlayMax, false) || ImGui::IsMouseHoveringRect(toolbarMin, toolbarMax, false) || ImGui::IsMouseHoveringRect(promptMin, promptMax, false))) hovered = false;   // the deformation controls sit on the canvas
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->PushClipRect(canvasMin, canvasMax, true);
     modeClock += ImGui::GetIO().DeltaTime;
@@ -681,7 +848,14 @@ void App::drawCanvas() {
                     ImVec2 u((e1.x - e0.x) / L, (e1.y - e0.y) / L), nn(-u.y, u.x);          // nn: screen-side of local +y (the hatched side)
                     ImVec2 side = ImVec2((float)(rr.apply(Vec2(0, 1)).x), (float)(rr.apply(Vec2(0, 1)).y));
                     if (nn.x * side.x + nn.y * side.y < 0) { nn.x = -nn.x; nn.y = -nn.y; }
-                    for (float t = 0; t <= L; t += 11.0f) {
+                    // only hatch the part that is on screen (an "infinite" floor is thousands of metres long)
+                    float tLo = 1e30f, tHi = -1e30f;
+                    for (int cx = 0; cx < 2; ++cx) for (int cy = 0; cy < 2; ++cy) {
+                        float tt = ((cx ? canvasMax.x : canvasMin.x) - e0.x) * u.x + ((cy ? canvasMax.y : canvasMin.y) - e0.y) * u.y;
+                        tLo = std::min(tLo, tt); tHi = std::max(tHi, tt);
+                    }
+                    float t0 = std::max(0.0f, std::floor((tLo - 20.0f) / 11.0f) * 11.0f), t1 = std::min(L, tHi + 20.0f);
+                    for (float t = t0; t <= t1; t += 11.0f) {
                         ImVec2 q0(e0.x + u.x * t, e0.y + u.y * t);
                         dl->AddLine(q0, ImVec2(q0.x + nn.x * 9.0f - u.x * 7.0f, q0.y + nn.y * 9.0f - u.y * 7.0f), pal.dim, 1.3f);
                     }
@@ -862,20 +1036,44 @@ void App::drawCanvas() {
             default: break;
         }
         if (tool == Tool::Spring || tool == Tool::Damper || tool == Tool::Rod || tool == Tool::Pin || tool == Tool::Weld) {
-            int hover = pickBody(toWorld(mp));
-            if (hover >= 0) {
-                Vec2 p;
-                double a;
-                bodyPose(hover, p, a);
-                dl->AddCircle(toScreen(p), 8, gh, 16, 2.0f);
+            const bool joint = tool == Tool::Pin || tool == Tool::Weld;
+            const int saveMode = linkAttach;
+            if (joint && linkAttach == 1) linkAttach = 0;
+            int hover = pickBodyForLink(toWorld(mp));
+            Vec2 target = toWorld(mp), hp;
+            bool haveTarget = false;
+            if (hover >= 0 && hover != linkFirst) {                                 // the point it would attach to if you clicked now
+                Vec2 nrm(0, -1);
+                if (linkFirst >= 0 && !joint) constrainedSecond(hover, target, hp);
+                else hp = attachPointFor(hover, target, &nrm);
+                dl->AddCircle(toScreen(hp), 8, gh, 16, 2.5f);
+                dl->AddCircleFilled(toScreen(hp), 3, gh);
+                if (linkFirst < 0 && linkDir == 1 && !joint) dl->AddLine(toScreen(hp), toScreen(hp + nrm * (30.0 / scale)), gh, 1.8f);   // the face normal
+                target = hp;
+                haveTarget = true;
+            } else if (hover >= 0 && linkFirst < 0) {
+                hp = attachPointFor(hover, target, nullptr);
+                dl->AddCircle(toScreen(hp), 8, gh, 16, 2.5f);
+                dl->AddCircleFilled(toScreen(hp), 3, gh);
             }
+            linkAttach = saveMode;
             if (linkFirst >= 0) {
-                Vec2 p;
-                double a;
-                bodyPose(linkFirst, p, a);
-                ImVec2 sa = toScreen(p + Rot(a).apply(linkFirstLocal));
-                dl->AddLine(sa, mp, gh, 2.0f);
+                ImVec2 sa = toScreen(linkFirstWorld);
+                const Vec2 ax = linkAxis();
+                if (!joint && lengthSq(ax) > 0.25) {
+                    dl->AddLine(toScreen(linkFirstWorld - ax * 60.0), toScreen(linkFirstWorld + ax * 60.0), IM_COL32(90, 205, 255, 70), 1.0f);   // the axis it must follow
+                    if (!haveTarget) target = linkFirstWorld + ax * dot(target - linkFirstWorld, ax);
+                }
+                dl->AddLine(sa, toScreen(target), gh, 2.5f);
                 dl->AddCircleFilled(sa, 5, gh);
+                Vec2 dd = target - linkFirstWorld;
+                if (length(dd) > 0.02) {
+                    char ab[48];
+                    double ang = std::atan2(dd.y, dd.x) * 180.0 / kPi;
+                    std::snprintf(ab, sizeof ab, "%.0f deg   %.2f m", ang < 0 ? ang + 360.0 : ang, length(dd));
+                    ImVec2 mid = toScreen(linkFirstWorld + dd * 0.5);
+                    dl->AddText(ImVec2(mid.x + 8, mid.y - 18), IM_COL32(150, 215, 255, 240), ab);
+                }
             }
         }
         if (tool != Tool::Spring && tool != Tool::Damper && tool != Tool::Rod && tool != Tool::Pin && tool != Tool::Weld) {
@@ -927,6 +1125,77 @@ void App::drawCanvas() {
         std::snprintf(mb, sizeof mb, "Animating mode %d: %.3f Hz", modeShown + 1, modal.modes[modeShown].freqHz);
         dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 44), pal.amber, mb);
     }
+    // ---- the small box for connections: where it attaches and which way it runs
+    promptMin = promptMax = ImVec2(0, 0);
+    if (!recording && (tool == Tool::Spring || tool == Tool::Damper || tool == Tool::Rod || tool == Tool::Pin || tool == Tool::Weld)) {
+        const bool joint = tool == Tool::Pin || tool == Tool::Weld;
+        const char* what = tool == Tool::Spring ? "Spring" : tool == Tool::Damper ? "Damper" : tool == Tool::Rod ? "Rigid rod" : tool == Tool::Pin ? "Pin joint" : "Fixed joint";
+        ImVec2 pos(canvasMin.x + 10, canvasMin.y + 104);
+        if (linkFirst >= 0) {                                                          // after the first click it sits beside the first attachment point
+            ImVec2 a0 = toScreen(linkFirstWorld);
+            pos = ImVec2(std::min(a0.x + 22, canvasMax.x - 360), std::min(a0.y + 16, canvasMax.y - 230));
+            pos.x = std::max(pos.x, canvasMin.x + 6);
+            pos.y = std::max(pos.y, canvasMin.y + 100);
+        }
+        const float bw = 340.0f;
+        ImVec2 start = pos;
+        dl->ChannelsSplit(2);
+        dl->ChannelsSetCurrent(1);
+        ImGui::SetCursorScreenPos(ImVec2(pos.x + 10, pos.y + 8));
+        ImGui::BeginGroup();
+        ImGui::PushID("linkprompt");
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+        ImGui::PushStyleColor(ImGuiCol_Border, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::PushTextWrapPos(pos.x + bw - 12 - ImGui::GetWindowPos().x);
+        ImGui::PushItemWidth(bw - 20);
+        ImGui::TextColored(ImVec4(0.55f, 0.82f, 1.0f, 1.0f), "%s: %s", what, linkFirst < 0 ? "click the first body" : "now click the second body");
+        ImGui::TextUnformatted("Attach to");
+        ImGui::RadioButton("Edge", &linkAttach, 1); ImGui::SameLine();
+        ImGui::RadioButton("Key points", &linkAttach, 2); ImGui::SameLine();
+        ImGui::RadioButton("Centre", &linkAttach, 3); ImGui::SameLine();
+        ImGui::RadioButton("Exact", &linkAttach, 0);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Exact: where you click. Edge: the nearest point of the body's outline.\nKey points: corners, the middle and the thirds of an edge. Centre: the middle of the body.");
+        if (!joint) {
+            ImGui::TextUnformatted("Direction");
+            ImGui::RadioButton("Free", &linkDir, 0); ImGui::SameLine();
+            ImGui::RadioButton("Perpendicular", &linkDir, 1); ImGui::SameLine();
+            ImGui::RadioButton("Horizontal", &linkDir, 2); ImGui::SameLine();
+            ImGui::RadioButton("Vertical", &linkDir, 3);
+            ImGui::RadioButton("Angle", &linkDir, 4);
+            if (linkDir == 4) {
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(90);
+                ImGui::DragFloat("##lang", &linkAngle, 1.0f, -360.0f, 360.0f, "%.0f deg");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("0")) linkAngle = 0;
+                ImGui::SameLine();
+                if (ImGui::SmallButton("45")) linkAngle = 45;
+                ImGui::SameLine();
+                if (ImGui::SmallButton("90")) linkAngle = 90;
+                ImGui::SameLine();
+                if (ImGui::SmallButton("135")) linkAngle = 135;
+            }
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            ImGui::TextWrapped(linkDir == 0 ? "Free: the %s runs straight from point to point." :
+                               linkDir == 1 ? "Perpendicular: the %s leaves the first face at a right angle, and ends where that line meets the second body." :
+                               "The %s follows this direction; it ends where the line meets the second body.", joint ? "joint" : "connection");
+            ImGui::PopStyleColor();
+        }
+        ImGui::PopItemWidth();
+        ImGui::PopTextWrapPos();
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar();
+        ImGui::PopID();
+        ImGui::EndGroup();
+        ImVec2 end(start.x + bw, ImGui::GetItemRectMax().y + 8);
+        dl->ChannelsSetCurrent(0);
+        dl->AddRectFilled(start, end, pal.panel, 8.0f);
+        dl->AddRect(start, end, IM_COL32(90, 205, 255, 200), 8.0f, 1.5f);
+        dl->ChannelsMerge();
+        promptMin = start;
+        promptMax = end;
+    }
+
     // ---- run controls (top left of the canvas): Run, Pause, Stop, Step, Compute
     toolbarMin = toolbarMax = ImVec2(0, 0);
     if (!recording) {

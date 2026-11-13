@@ -85,6 +85,8 @@ struct App {
     bool exportAll = true;               // every channel, or only the ticked ones
     std::vector<char> exportSel;         // one flag per telemetry channel (when not all)
     bool autoExportCsv = false, autoExportXlsx = false, autoRecord = false;
+    bool schemNames = true, schemValues = true, schemArrows = false, schemLoads = true;   // schematic export options
+    void exportSchematic();
     void saveDataSettings();
     void loadDataSettings();
     std::string exportBaseName() const;
@@ -92,6 +94,17 @@ struct App {
     const Telemetry* exportSource(Telemetry& tmp, bool excel) const;
     bool showGrid = true, showContacts = true, showLabels = true, showVectors = false;
     int selBody = -1, selLink = -1;
+    // how the next connection attaches (the small box that appears while a connection tool is active)
+    int linkAttach = 1;                  // 0 exactly where I click, 1 nearest point of the edge, 2 key points (middle, thirds, corners), 3 centre
+    int linkDir = 0;                     // axis of the connection: 0 free (point to point), 1 perpendicular to the first face, 2 horizontal, 3 vertical, 4 angle
+    float linkAngle = 90.0f;             // degrees, 0 = right, 90 = down
+    Vec2 linkFirstWorld, linkFirstNormal;   // the first attachment point and the outward normal of the face it is on
+    ImVec2 promptMin{0, 0}, promptMax{0, 0};   // the box on the canvas (clicks there are not canvas clicks)
+    Vec2 attachPointFor(int body, Vec2 world, Vec2* normal) const;       // where a connection would attach to `body` for a click at `world`
+    bool reorientLink(int linkIndex, Vec2 axis, bool keepFirst);        // swing one end of a placed spring / damper / rod onto a new axis, keeping the other end where it is
+    Vec2 linkAxis() const;               // unit axis of the connection for the chosen direction ((0,0) when free)
+    bool constrainedSecond(int body, Vec2 mouseWorld, Vec2& out) const; // the second attachment point under the chosen direction
+    int pickBodyForLink(Vec2 w) const;   // the body under the cursor, or the one whose edge is within a few pixels
     int linkFirst = -1;                  // first body clicked while drawing a link
     Vec2 linkFirstLocal;
     int dragBody = -1;                   // body being dragged with the mouse

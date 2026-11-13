@@ -28,7 +28,7 @@ add_library(vlab_core STATIC
 target_include_directories(vlab_core PUBLIC core/include)
 
 # ---------------------------------------------------------------- Excel / CSV export (needs zlib)
-add_library(vlab_io STATIC io/xlsx.cpp io/report.cpp)
+add_library(vlab_io STATIC io/xlsx.cpp io/report.cpp io/schematic.cpp)
 target_include_directories(vlab_io PUBLIC io)
 target_link_libraries(vlab_io PUBLIC vlab_core z)
 
