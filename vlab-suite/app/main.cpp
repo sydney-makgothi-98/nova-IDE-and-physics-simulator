@@ -1,4 +1,4 @@
-// main.cpp -- Vibration Lab Suite: the window, Direct3D 11, Dear ImGui, screen capture for video.
+// main.cpp -- VL Lab Mechanics Suite: the window, Direct3D 11, Dear ImGui, screen capture for video.
 #include <windows.h>
 #include <d3d11.h>
 #include <dwmapi.h>
@@ -57,6 +57,36 @@ struct DxPlatform : vlab::Platform {
     void releaseFrame() override { if (mapped && staging) { g_ctx->Unmap(staging, 0); mapped = false; } }
     void setTitle(const std::string& t) override { SetWindowTextA(g_hwnd, t.c_str()); }
     void requestQuit() override { PostMessage(g_hwnd, WM_CLOSE, 0, 0); }
+    struct Tex { ID3D11Texture2D* tex = nullptr; ID3D11ShaderResourceView* srv = nullptr; int w = 0, h = 0; };
+    void* createTexture(int w, int h) override {
+        D3D11_TEXTURE2D_DESC d{};
+        d.Width = (UINT)w; d.Height = (UINT)h; d.MipLevels = 1; d.ArraySize = 1;
+        d.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        d.SampleDesc.Count = 1;
+        d.Usage = D3D11_USAGE_DYNAMIC;
+        d.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        d.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        Tex* t = new Tex();
+        t->w = w; t->h = h;
+        if (FAILED(g_dev->CreateTexture2D(&d, nullptr, &t->tex)) || FAILED(g_dev->CreateShaderResourceView(t->tex, nullptr, &t->srv))) { destroyTexture(t); return nullptr; }
+        return t;
+    }
+    void updateTexture(void* h, const void* bgra, int pitchBytes) override {
+        Tex* t = (Tex*)h;
+        if (!t || !t->tex) return;
+        D3D11_MAPPED_SUBRESOURCE ms;
+        if (FAILED(g_ctx->Map(t->tex, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) return;
+        for (int y = 0; y < t->h; ++y) memcpy((unsigned char*)ms.pData + (size_t)y * ms.RowPitch, (const unsigned char*)bgra + (size_t)y * pitchBytes, (size_t)t->w * 4);
+        g_ctx->Unmap(t->tex, 0);
+    }
+    void destroyTexture(void* h) override {
+        Tex* t = (Tex*)h;
+        if (!t) return;
+        if (t->srv) t->srv->Release();
+        if (t->tex) t->tex->Release();
+        delete t;
+    }
+    unsigned long long textureId(void* h) override { Tex* t = (Tex*)h; return t ? (unsigned long long)(uintptr_t)t->srv : 0; }
 };
 
 // ====================================================================== Direct3D
@@ -116,7 +146,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             break;
         case WM_CLOSE:
             if (g_app && g_app->dirty) {
-                int r = MessageBoxA(hwnd, "Save the changes to this design before closing?", "Vibration Lab Suite", MB_YESNOCANCEL | MB_ICONQUESTION);
+                int r = MessageBoxA(hwnd, "Save the changes to this design before closing?", "VL Lab Mechanics Suite", MB_YESNOCANCEL | MB_ICONQUESTION);
                 if (r == IDCANCEL) return 0;
                 if (r == IDYES && !g_app->saveDesign(false)) return 0;
             }
@@ -183,9 +213,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     wc.lpszClassName = "VLabSuiteWindow";
     RegisterClassExA(&wc);
-    g_hwnd = CreateWindowExA(0, wc.lpszClassName, "Vibration Lab Suite", WS_OVERLAPPEDWINDOW, 80, 60, 1600, 940, nullptr, nullptr, hInst, nullptr);
+    g_hwnd = CreateWindowExA(0, wc.lpszClassName, "VL Lab Mechanics Suite", WS_OVERLAPPEDWINDOW, 80, 60, 1600, 940, nullptr, nullptr, hInst, nullptr);
     if (!createDevice(g_hwnd)) {
-        MessageBoxA(nullptr, "Could not start Direct3D 11. Please update your graphics driver.", "Vibration Lab Suite", MB_ICONERROR);
+        MessageBoxA(nullptr, "Could not start Direct3D 11. Please update your graphics driver.", "VL Lab Mechanics Suite", MB_ICONERROR);
         cleanupDevice();
         return 1;
     }

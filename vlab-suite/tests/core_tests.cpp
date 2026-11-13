@@ -8,6 +8,8 @@
 #include <cstring>
 #include "vlab/analysis.hpp"
 #include "vlab/deform.hpp"
+#include "vlab/expr.hpp"
+#include "vlab/section.hpp"
 #include "vlab/model.hpp"
 #include "vlab/project_io.hpp"
 #include "vlab/telemetry.hpp"
@@ -466,6 +468,7 @@ static void testDeformation() {
         m.addSupport(LinkKind::Pin, beam, Vec2(-1.5, 2.4), 0);
         m.addSupport(LinkKind::Roller, beam, Vec2(1.5, 2.4), 0);
         m.updateMass();
+        m.env.deadLoad = true;                                            // the analytic answer below includes the beam's own weight
         m.run.duration = 3;
         World w(m);
         run(w, 3.0);
@@ -499,6 +502,7 @@ static void testDeformation() {
         int beam = m.addBody(bm);
         m.addSupport(LinkKind::Weld, beam, Vec2(0.0, 0.0), 0);
         m.updateMass();
+        m.env.deadLoad = true;
         World w(m);
         run(w, 1.0);
         BeamFE fe;
@@ -511,9 +515,216 @@ static void testDeformation() {
     }
 }
 
+// ------------------------------------------------------------------ applied loads: a push and a pull in newtons
+static void testLoads() {
+    std::printf("Applied loads\n");
+    for (int pull = 0; pull < 2; ++pull) {
+        Model m;
+        m.env.setIdeal();
+        m.env.gravity = 0;
+        Body b = withMass(makeBox(0.5, 0.5, M("Steel"), Vec2(0, 0)), 10.0);
+        b.loadN = 100.0;
+        b.loadAngleDeg = 0.0;
+        b.loadPull = pull != 0;
+        m.addBody(b);
+        m.updateMass();
+        World w(m);
+        run(w, 1.0);
+        double v = w.state()[0].vel.x, expect = (pull ? -1.0 : 1.0) * 10.0;                   // a = F / m = 10 m/s^2
+        check(pull ? "a 100 N pull moves a 10 kg body backwards at 10 m/s^2" : "a 100 N push moves a 10 kg body at 10 m/s^2", std::fabs(v - expect) < 0.05, "v = %.3f m/s, expected %.3f", v, expect);
+    }
+    {
+        Model m;
+        m.env.setIdeal();
+        m.env.gravity = 0;
+        Body b = withMass(makeBox(0.5, 0.5, M("Steel"), Vec2(0, 0)), 10.0);
+        b.loadN = 98.0665;                                                                    // 10 kg-force
+        b.loadAngleDeg = 90.0;                                                                // downwards
+        m.addBody(b);
+        m.updateMass();
+        World w(m);
+        run(w, 1.0);
+        check("10 kg-force (98.07 N) downward = gravity on 10 kg", std::fabs(w.state()[0].vel.y - 9.80665) < 0.02, "vy = %.4f m/s", w.state()[0].vel.y);
+    }
+}
+
+// ------------------------------------------------------------------ distributed loads and formulas
+static double beamTestDeflection(Model m, int beam) {
+    m.updateMass();
+    World w(m);
+    run(w, 2.0);
+    BeamFE fe;
+    fe.build(beam, w.model().bodies[beam]);
+    Deflection d;
+    beamDeflection(w, fe, d);
+    return d.maxAbs;
+}
+
+static void testDistributed() {
+    std::printf("Distributed loads\n");
+    {
+        auto ev = [](const char* f, double x, double L, double t) { auto e = Expr::parse(f); return e ? e->eval(x, L, t) : -9999.0; };
+        check("formula: 2*x^2 + sin(pi*x/L) at x = 1.5, L = 3", std::fabs(ev("2*x^2+sin(pi*x/L)", 1.5, 3, 0) - 5.5) < 1e-9, "%.6f", ev("2*x^2+sin(pi*x/L)", 1.5, 3, 0));
+        check("formula: -x^2 = -(x^2); 2x is 2*x; sqrt(abs(-9)); pow(2,3)", ev("-x^2", 2, 1, 0) == -4 && ev("2x", 2, 1, 0) == 4 && ev("sqrt(abs(-9))", 0, 1, 0) == 3 && ev("pow(2,3)", 0, 1, 0) == 8, "-4, 4, 3, 8");
+        std::string err;
+        check("a broken formula is refused with a message", !Expr::parse("2+*x", &err) && !err.empty() && !Expr::parse("foo(x)", &err) && !Expr::parse("(1+2", &err), "\"%s\"", err.c_str());
+    }
+    {   // a free 2 m block with a uniform 100 N/m load (200 N) and no gravity: a = 200 / 10 = 20 m/s^2, no spin
+        Model m;
+        m.env.setIdeal();
+        m.env.gravity = 0;
+        Body b = withMass(makeBox(2.0, 0.5, M("Steel"), Vec2(0, 0)), 10.0);
+        b.dloadType = DL_Uniform; b.dloadN = 100; b.dloadAngleDeg = 90;
+        m.addBody(b);
+        m.updateMass();
+        World w(m);
+        run(w, 1.0);
+        check("uniform 100 N/m over 2 m = 200 N: a = 20 m/s^2, no spin", std::fabs(w.state()[0].vel.y - 20.0) < 0.05 && std::fabs(w.state()[0].omega) < 1e-6, "vy %.3f, omega %.2e", w.state()[0].vel.y, w.state()[0].omega);
+    }
+    {   // triangular, rising to the right: resultant w L / 2 = 100 N at 2/3 L, i.e. 1/3 m right of centre: torque 33.33 N m, I = 10 (4 + 0.25) / 12
+        Model m;
+        m.env.setIdeal();
+        m.env.gravity = 0;
+        Body b = withMass(makeBox(2.0, 0.5, M("Steel"), Vec2(0, 0)), 10.0);
+        b.dloadType = DL_TriRising; b.dloadN = 100; b.dloadAngleDeg = 90;
+        m.addBody(b);
+        m.updateMass();
+        World w(m);
+        run(w, 0.2);
+        double alpha = (100.0 / 3.0) / (10.0 * (4.0 + 0.25) / 12.0), expect = alpha * 0.2;
+        check("triangular load: force 100 N at 2/3 L spins the block", std::fabs(w.state()[0].omega - expect) < 0.02 * expect && std::fabs(w.state()[0].vel.y - 2.0) < 0.05, "omega %.4f vs %.4f, vy %.3f", w.state()[0].omega, expect, w.state()[0].vel.y);
+    }
+    const double EI = 200e9 * 0.2 * 0.2 * 0.2 / 12.0, L = 4.0;
+    auto supported = [&](int type, double w, const char* expr, bool dead, double massKg) {
+        Model m;
+        Body bm = withMass(makeBeam(L, 0.2, M("Steel"), Vec2(0, 2.0)), massKg);
+        bm.dloadType = type; bm.dloadN = w; bm.dloadAngleDeg = 90;
+        if (expr) bm.dloadExpr = expr;
+        int beam = m.addBody(bm);
+        m.addSupport(LinkKind::Pin, beam, Vec2(-L / 2, 2.0), 0);
+        m.addSupport(LinkKind::Roller, beam, Vec2(L / 2, 2.0), 0);
+        m.env.deadLoad = dead;
+        return beamTestDeflection(m, beam);
+    };
+    {
+        double d = supported(DL_Uniform, 2000, nullptr, false, 10.0), exact = 5 * 2000 * std::pow(L, 4) / (384 * EI);
+        check("beam, uniform 2 kN/m: deflection 5 w L^4 / 384 EI", std::fabs(d - exact) < 0.03 * exact, "%.4e m vs %.4e m", d, exact);
+    }
+    {
+        double d = supported(DL_Equation, 0, "500*sin(pi*x/L)", false, 10.0), exact = 500 * std::pow(L, 4) / (std::pow(kPi, 4) * EI);
+        check("beam, sine load 500 sin(pi x / L): deflection q0 L^4 / (pi^4 EI)", std::fabs(d - exact) < 0.03 * exact, "%.4e m vs %.4e m", d, exact);
+    }
+    {
+        double d = supported(DL_TriPeak, 3000, nullptr, false, 10.0), exact = 3000.0 * std::pow(L, 4) / (120.0 * EI);   // symmetric triangle: w_max = q0 L^4 / (120 EI)
+        check("beam, triangular load (peak in the middle): deflection q0 L^4 / 120 EI", std::fabs(d - exact) < 0.03 * exact, "%.4e m vs %.4e m", d, exact);
+    }
+    {
+        const double mass = 400.0, exact = 5 * (mass * 9.81 / L) * std::pow(L, 4) / (384 * EI);
+        double on = supported(DL_None, 0, nullptr, true, mass), off = supported(DL_None, 0, nullptr, false, mass);
+        check("dead load ON: 100 kg/m own weight bends the beam as 5 w L^4 / 384 EI", std::fabs(on - exact) < 0.03 * exact, "%.4e m vs %.4e m", on, exact);
+        check("dead load OFF: the same beam shows no bending", off < 1e-3 * exact, "%.2e m", off);
+    }
+}
+
+// ------------------------------------------------------------------ cross-sections, internal-force diagrams, temperature
+static Deflection solvedBeam(Model m, int beam, BeamFE* feOut = nullptr) {
+    m.updateMass();
+    World w(m);
+    run(w, 2.0);
+    BeamFE fe;
+    fe.build(beam, w.model().bodies[beam], w.model().env.deltaT);
+    Deflection d;
+    beamDeflection(w, fe, d);
+    if (feOut) *feOut = fe;
+    return d;
+}
+
+static void testSections() {
+    std::printf("Cross-sections, diagrams and temperature\n");
+    auto sec = [](int type, double B, double H, double tf, double tw) {
+        Body b = makeBeam(3.0, 0.2, M("Steel"), Vec2(0, 0));
+        b.secType = type; b.secB = B; b.secH = H; b.secTf = tf; b.secTw = tw;
+        return makeSection(b);
+    };
+    {
+        Section s = sec(SEC_RECT, 0.1, 0.2, 0, 0);
+        check("rectangle 100 x 200: I = b h^3 / 12, A = b h, Z = I / c", std::fabs(s.I - 0.1 * 0.008 / 12) < 1e-3 * s.I && std::fabs(s.A - 0.02) < 1e-6 && std::fabs(s.Z - s.I / 0.1) < 1e-3 * s.Z, "I = %.4e m^4, Z = %.4e m^3", s.I, s.Z);
+        Section c = sec(SEC_CIRCLE, 0, 0.1, 0, 0);
+        check("circle d = 100: I = pi d^4 / 64, A = pi d^2 / 4", std::fabs(c.I - kPi * 1e-4 / 64) < 2e-3 * c.I && std::fabs(c.A - kPi * 0.01 / 4) < 2e-3 * c.A, "I = %.4e (%.4e)", c.I, kPi * 1e-4 / 64);
+        Section i = sec(SEC_I, 0.1, 0.2, 0.01, 0.006);
+        double iExact = (0.1 * 0.008 - 0.094 * std::pow(0.18, 3)) / 12.0;
+        check("I-beam 100 x 200, tf 10, tw 6: I = (B H^3 - (B - tw)(H - 2 tf)^3) / 12", std::fabs(i.I - iExact) < 2e-3 * iExact, "%.4e vs %.4e m^4", i.I, iExact);
+        Section t = sec(SEC_TUBE, 0, 0.1, 0.005, 0);
+        double tExact = kPi * (1e-4 - std::pow(0.09, 4)) / 64.0;
+        check("tube D = 100, wall 5: I = pi (D^4 - d^4) / 64", std::fabs(t.I - tExact) < 3e-3 * tExact, "%.4e vs %.4e m^4", t.I, tExact);
+        Section tb = sec(SEC_T, 0.1, 0.2, 0.02, 0.02);
+        double yc = (0.002 * 0.01 + 0.0036 * 0.11) / 0.0056;
+        check("T-beam: the neutral axis sits at the area-weighted centroid", std::fabs(tb.yc - yc) < 5e-3 * yc, "%.4f m below the top (%.4f)", tb.yc, yc);
+        SectionStress st;
+        sectionStress(s, 1000.0, 10000.0, 0.0, st);
+        check("rectangle: sigma = M c / I (1.5 MPa) and tau_max = 1.5 V / A (0.75 MPa)", std::fabs(st.sigMax + st.sigMin) < 1e-2 * st.sigMax && std::fabs(st.sigMax - 1.5e6) < 0.02 * 1.5e6 && std::fabs(st.tauMax - 0.75e6) < 0.02 * 0.75e6, "%.3f MPa, %.3f MPa", st.sigMax / 1e6, st.tauMax / 1e6);
+    }
+    const double L = 4.0;
+    auto beamWith = [&](Model& m, double massKg) {
+        Body bm = withMass(makeBeam(L, 0.2, M("Steel"), Vec2(0, 2.0)), massKg);
+        int beam = m.addBody(bm);
+        return beam;
+    };
+    {   // simply supported, uniform 2 kN/m: M(L/2) = w L^2 / 8 = 4 kN m, V(L/4) = w L / 4 = 2 kN, peak stress M c / I
+        Model m;
+        int beam = beamWith(m, 10.0);
+        m.bodies[beam].dloadType = DL_Uniform; m.bodies[beam].dloadN = 2000; m.bodies[beam].dloadAngleDeg = 90;
+        m.addSupport(LinkKind::Pin, beam, Vec2(-L / 2, 2.0), 0);
+        m.addSupport(LinkKind::Roller, beam, Vec2(L / 2, 2.0), 0);
+        BeamFE fe;
+        Deflection d = solvedBeam(m, beam, &fe);
+        const int N = fe.elements;
+        double Mmid = d.M[N / 2], Vq = d.V[N / 4], Mend = d.M[0];
+        check("moment diagram: M at mid-span = w L^2 / 8", std::fabs(Mmid - 4000.0) < 0.02 * 4000.0, "%.1f N m", Mmid);
+        check("shear diagram: V at a quarter of the span = w L / 4", std::fabs(Vq - 2000.0) < 0.02 * 2000.0, "%.1f N", Vq);
+        check("moment is zero at a pinned end", std::fabs(Mend) < 0.03 * 4000.0, "%.1f N m", Mend);
+        std::vector<float> Mf(d.M.begin(), d.M.end());
+        double s = bendingStressFromM(fe, Mf.data()), sExact = 4000.0 * 0.1 / (0.2 * 0.2 * 0.2 / 12.0);
+        check("peak bending stress = M c / I from the diagram", std::fabs(s - sExact) < 0.03 * sExact, "%.3f MPa vs %.3f MPa", s / 1e6, sExact / 1e6);
+    }
+    {   // a hotter lower face bows a simply supported beam downwards by alpha dT L^2 / (8 h) and puts no moment in it
+        Model m;
+        int beam = beamWith(m, 10.0);
+        m.bodies[beam].tempGrad = 50.0;
+        m.addSupport(LinkKind::Pin, beam, Vec2(-L / 2, 2.0), 0);
+        m.addSupport(LinkKind::Roller, beam, Vec2(L / 2, 2.0), 0);
+        Deflection d = solvedBeam(m, beam);
+        double exact = 12e-6 * 50.0 * L * L / (8 * 0.2);
+        check("thermal gradient 50 C bows the beam by alpha dT L^2 / 8 h", std::fabs(d.maxSigned - exact) < 0.02 * exact, "%.4e m vs %.4e m", d.maxSigned, exact);
+        double Mmax = 0;
+        for (double v : d.M) Mmax = std::max(Mmax, std::fabs(v));
+        check("the free thermal bow carries no bending moment", Mmax < 1e-3 * 1.333e8 * 3e-3, "max |M| = %.2f N m", Mmax);
+    }
+    {   // uniform temperature rise: free to slide it just grows, held at both ends it carries -E alpha dT
+        Model m;
+        int beam = beamWith(m, 10.0);
+        m.bodies[beam].tempDelta = 40.0;
+        m.addSupport(LinkKind::Pin, beam, Vec2(-L / 2, 2.0), 0);
+        m.addSupport(LinkKind::Roller, beam, Vec2(L / 2, 2.0), 0);
+        Deflection free = solvedBeam(m, beam);
+        check("pin + roller: the beam is free to grow, strain alpha dT", !free.restrained && std::fabs(free.epsT - 12e-6 * 40.0) < 1e-12 && std::fabs(free.axialSigma) < 1e-9, "growth %.3f mm over %.0f m", free.epsT * L * 1000.0, L);
+        Model m2;
+        int beam2 = beamWith(m2, 10.0);
+        m2.bodies[beam2].tempDelta = 40.0;
+        m2.addSupport(LinkKind::Pin, beam2, Vec2(-L / 2, 2.0), 0);
+        m2.addSupport(LinkKind::Pin, beam2, Vec2(L / 2, 2.0), 0);
+        Deflection held = solvedBeam(m2, beam2);
+        double exact = -200e9 * 12e-6 * 40.0;
+        check("pinned at both ends: heating 40 C gives -E alpha dT of axial stress", held.restrained && std::fabs(held.axialSigma - exact) < 1e-6 * std::fabs(exact), "%.1f MPa", held.axialSigma / 1e6);
+    }
+}
+
 int main() {
     std::printf("Vibration Lab Suite: validation suite\n\n");
     testDeformation();
+    testLoads();
+    testDistributed();
+    testSections();
     testShapes();
     testSmooth();
     testPendulum();

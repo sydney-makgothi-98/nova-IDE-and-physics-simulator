@@ -9,6 +9,10 @@ add_executable(vlab_suite WIN32
   app/ui_panels.cpp
   app/ui_plots.cpp
   app/dialogs.cpp
+  app/theme.cpp
+  app/section_ui.cpp
+  app/dashboard.cpp
+  app/video.cpp
   ${IMGUI}/imgui.cpp
   ${IMGUI}/imgui_draw.cpp
   ${IMGUI}/imgui_tables.cpp

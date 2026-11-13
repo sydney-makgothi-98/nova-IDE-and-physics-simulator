@@ -578,13 +578,191 @@ static void tabDeform(App& a) {
 }
 
 // ---------------------------------------------------------------------------------------------- the panel
+// Load, shear force and bending moment diagrams of a beam, and the stress distribution through its cross-section.
+static void tabBeamDiagrams(App& a) {
+    const Telemetry& t = a.ses.telemetry();
+    std::vector<int> beams;
+    for (size_t i = 0; i < t.deform.size(); ++i)
+        if (t.deform[i].beam && t.deform[i].rows() > 0 && !t.deform[i].m.empty()) beams.push_back((int)i);
+    if (t.rows() == 0 || beams.empty()) {
+        ImGui::TextDisabled("Run the model with a beam in it (a long slender box: length at least 4 x its height). Its load, shear force and bending moment diagrams, and the stress through its cross-section, appear here.");
+        return;
+    }
+    a.diagBody = std::clamp(a.diagBody, 0, (int)beams.size() - 1);
+    ImGui::TextUnformatted("Beam:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(170);
+    if (ImGui::BeginCombo("##diagbeam", t.deform[beams[a.diagBody]].name.c_str())) {
+        for (int k = 0; k < (int)beams.size(); ++k) if (ImGui::Selectable(t.deform[beams[k]].name.c_str(), k == a.diagBody)) a.diagBody = k;
+        ImGui::EndCombo();
+    }
+    const DeformSeries& ds = t.deform[beams[a.diagBody]];
+    const int nodes = (int)ds.fe.x.size();
+    const double L = ds.fe.L;
+    const int rows = (int)std::min(ds.rows(), t.rows());
+    ImGui::SameLine();
+    ImGui::Checkbox("Latest sample", &a.diagLive);
+    int row = a.diagLive ? rows - 1 : std::clamp(a.deformRow < 0 ? rows - 1 : a.deformRow, 0, rows - 1);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(230);
+    int rs = row;
+    if (ImGui::SliderInt("##diagrow", &rs, 0, rows - 1, "row %d")) { a.deformRow = rs; a.diagLive = false; row = rs; }
+    ImGui::SameLine();
+    ImGui::TextDisabled("t = %.3f s", t.t[row]);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Peak moment")) {
+        double best = -1;
+        for (int r = 0; r < rows; ++r) {
+            double mx = 0;
+            for (int j = 0; j < nodes; ++j) mx = std::max(mx, (double)std::fabs(ds.m[(size_t)r * nodes + j]));
+            if (mx > best) { best = mx; a.deformRow = r; }
+        }
+        a.diagLive = false;
+        row = a.deformRow;
+    }
+    const float* W = ds.w.data() + (size_t)row * nodes;
+    const float* Mp = ds.m.data() + (size_t)row * nodes;
+    const float* Vp = ds.v.data() + (size_t)row * nodes;
+    const float* Qp = ds.q.data() + (size_t)row * nodes;
+    const float* PL = ds.pl.data() + (size_t)row * 16;
+    std::vector<double> xs(nodes), wv(nodes), mv(nodes), vv(nodes), qv(nodes);
+    double mMax = 0, mAt = 0, vMax = 0, vAt = 0, wMax = 0;
+    for (int j = 0; j < nodes; ++j) {
+        xs[j] = ds.fe.x[j] + L / 2;
+        wv[j] = W[j]; mv[j] = Mp[j]; vv[j] = Vp[j]; qv[j] = Qp[j];
+        if (std::fabs(mv[j]) > std::fabs(mMax)) { mMax = mv[j]; mAt = xs[j]; }
+        if (std::fabs(vv[j]) > std::fabs(vMax)) { vMax = vv[j]; vAt = xs[j]; }
+        wMax = std::max(wMax, std::fabs(wv[j]));
+    }
+    const double sigPeak = bendingStressFromM(ds.fe, Mp);
+    ImGui::Text("Max shear %.1f N at x = %.2f m     Max bending moment %.1f N m at x = %.2f m     Max bending stress M c / I = %.3f MPa  (Z = %.4g cm3, I = %.4g cm4)",
+                vMax, vAt, mMax, mAt, sigPeak / 1e6, ds.fe.sec.Z * 1e6, ds.fe.I * 1e8);
+    if (ImGui::BeginTabBar("##diagsub")) {
+        if (ImGui::BeginTabItem("Load, shear and moment diagrams", nullptr, a.diagSubForce == 0 ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None)) {
+            const float ww = (ImGui::GetContentRegionAvail().x - 3 * ImGui::GetStyle().ItemSpacing.x) / 4, hh = std::max(120.0f, ImGui::GetContentRegionAvail().y - 4);   // one row of four
+            auto xAxis = [&]() { ImPlot::SetupAxis(ImAxis_X1, "position along the beam (m)"); ImPlot::SetupAxisLimits(ImAxis_X1, 0, L, ImPlotCond_Always); };
+            std::vector<double> px, pp;
+            for (int k = 0; k < 8; ++k) if (std::fabs(PL[2 * k + 1]) > 1e-9) { px.push_back(PL[2 * k] + L / 2); pp.push_back(PL[2 * k + 1]); }
+            {
+                Rng r;
+                r.add(0.0); r.add(qv); r.add(pp);
+                if (ImPlot::BeginPlot("Load (N/m shaded; point forces N)", ImVec2(ww, hh))) {
+                    xAxis();
+                    setupAxis(ImAxis_Y1, "N/m or N", r, ImPlotAxisFlags_Invert);
+                    ImPlot::PlotShaded("distributed load q (N/m)", xs.data(), qv.data(), nodes, 0.0);
+                    ImPlot::PlotLine("q", xs.data(), qv.data(), nodes);
+                    if (!px.empty()) ImPlot::PlotStems("forces and reactions (N)", px.data(), pp.data(), (int)px.size());
+                    ImPlot::EndPlot();
+                }
+            }
+            ImGui::SameLine();
+            {
+                Rng r;
+                r.add(0.0); r.add(vv);
+                if (ImPlot::BeginPlot("Shear force  V(x)", ImVec2(ww, hh))) {
+                    xAxis();
+                    setupAxis(ImAxis_Y1, "N", r);
+                    ImPlot::PlotShaded("V (N)", xs.data(), vv.data(), nodes, 0.0);
+                    ImPlot::PlotLine("V", xs.data(), vv.data(), nodes);
+                    ImPlot::EndPlot();
+                }
+            }
+            ImGui::SameLine();
+            {
+                Rng r;
+                r.add(0.0); r.add(mv);
+                if (ImPlot::BeginPlot("Bending moment M(x) (tension side)", ImVec2(ww, hh))) {
+                    xAxis();
+                    setupAxis(ImAxis_Y1, "N m", r, ImPlotAxisFlags_Invert);
+                    ImPlot::PlotShaded("M (N m)", xs.data(), mv.data(), nodes, 0.0);
+                    ImPlot::PlotLine("M", xs.data(), mv.data(), nodes);
+                    ImPlot::EndPlot();
+                }
+            }
+            ImGui::SameLine();
+            {
+                const double us = wMax < 1e-7 ? 1e9 : (wMax < 1e-4 ? 1e6 : 1e3);
+                const char* un = wMax < 1e-7 ? "nm" : (wMax < 1e-4 ? "um" : "mm");
+                std::vector<double> ws(nodes);
+                Rng r;
+                for (int j = 0; j < nodes; ++j) { ws[j] = wv[j] * us; r.add(ws[j]); }
+                r.add(0.0);
+                char yl[40];
+                std::snprintf(yl, sizeof yl, "deflection (%s)", un);
+                if (ImPlot::BeginPlot("Deflected shape w(x)", ImVec2(ww, hh))) {
+                    xAxis();
+                    setupAxis(ImAxis_Y1, yl, r, ImPlotAxisFlags_Invert);
+                    ImPlot::PlotLine("w", xs.data(), ws.data(), nodes);
+                    ImPlot::EndPlot();
+                }
+            }
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Cross-section stress", nullptr, a.diagSubForce == 1 ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None)) {
+            if (a.diagX < 0) a.diagX = L / 4;          // a quarter of the span: both bending and shear are present there
+            a.diagX = std::clamp(a.diagX, 0.0, L);
+            float xf = (float)a.diagX;
+            ImGui::SetNextItemWidth(330);
+            if (ImGui::SliderFloat("##diagx", &xf, 0.0f, (float)L, "section at x = %.2f m from the left end")) a.diagX = xf;
+            const double fj = std::clamp(a.diagX / L * (nodes - 1), 0.0, (double)nodes - 1.0001);
+            const int j0 = (int)fj;
+            const double fr = fj - j0;
+            const double Mx = mv[j0] * (1 - fr) + mv[j0 + 1] * fr, Vx = vv[j0] * (1 - fr) + vv[j0 + 1] * fr;
+            const double Nax = ds.restrained ? ds.axialSigma * ds.fe.A : 0.0;
+            SectionStress st;
+            sectionStress(ds.fe.sec, Mx, Vx, Nax, st);
+            ImGui::SameLine();
+            ImGui::Text("M = %.1f N m   V = %.1f N   axial N = %.1f N", Mx, Vx, Nax);
+            ImGui::Text("Normal stress: top %.3f MPa, bottom %.3f MPa  (peak tension %.3f, peak compression %.3f)     Peak shear stress %.3f MPa%s",
+                        st.sigma.front() / 1e6, st.sigma.back() / 1e6, st.sigMax / 1e6, st.sigMin / 1e6, st.tauMax / 1e6,
+                        ds.restrained ? "     includes thermal axial stress" : "");
+            const float avW = ImGui::GetContentRegionAvail().x, avH = std::max(100.0f, ImGui::GetContentRegionAvail().y - 4);
+            ImGui::BeginGroup();
+            {
+                ImVec2 p0 = ImGui::GetCursorScreenPos();
+                const float sw = avW * 0.30f;
+                drawSectionSketch(ds.fe.sec, p0, ImVec2(sw, avH - 22), &st, a.palette());
+                ImGui::Dummy(ImVec2(sw, avH - 22));
+                ImGui::TextDisabled("blue = compression, red = tension");
+            }
+            ImGui::EndGroup();
+            ImGui::SameLine();
+            const double H = ds.fe.sec.H * 1000.0, yc = ds.fe.sec.yc * 1000.0;
+            std::vector<double> sg(st.sigma.size()), tu(st.tau.size()), yy(st.y.size());
+            Rng rs2, rt2, ry;
+            for (size_t k = 0; k < sg.size(); ++k) { sg[k] = st.sigma[k] / 1e6; tu[k] = st.tau[k] / 1e6; yy[k] = st.y[k] * 1000.0; rs2.add(sg[k]); rt2.add(tu[k]); }
+            rs2.add(0.0); rt2.add(0.0); ry.add(0.0); ry.add(H);
+            if (ImPlot::BeginPlot("Normal stress through the depth", ImVec2(avW * 0.34f, avH))) {
+                setupAxis(ImAxis_X1, "sigma (MPa)", rs2);
+                setupAxis(ImAxis_Y1, "depth below the top face (mm)", ry, ImPlotAxisFlags_Invert);
+                ImPlot::PlotLine("sigma", sg.data(), yy.data(), (int)sg.size());
+                ImPlot::PlotInfLines("neutral axis", &yc, 1, ImPlotSpec(ImPlotProp_Flags, ImPlotInfLinesFlags_Horizontal));
+                double zero = 0;
+                ImPlot::PlotInfLines("zero", &zero, 1);
+                ImPlot::EndPlot();
+            }
+            ImGui::SameLine();
+            if (ImPlot::BeginPlot("Shear stress through the depth", ImVec2(-1, avH))) {
+                setupAxis(ImAxis_X1, "tau (MPa)", rt2);
+                setupAxis(ImAxis_Y1, "depth below the top face (mm)", ry, ImPlotAxisFlags_Invert);
+                ImPlot::PlotLine("tau", tu.data(), yy.data(), (int)tu.size());
+                ImPlot::PlotInfLines("neutral axis", &yc, 1, ImPlotSpec(ImPlotProp_Flags, ImPlotInfLinesFlags_Horizontal));
+                ImPlot::EndPlot();
+            }
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+    a.diagSubForce = -1;
+}
+
 void App::drawTelemetry() {
     ImGui::Begin("Telemetry");
     if (ImGui::BeginTabBar("##teltabs")) {
         struct TabDef { const char* name; void (*fn)(App&); };
-        static const TabDef tabs[] = {{"Plots", tabTimeSeries}, {"Energy ledger", tabEnergy}, {"Path and phase", tabPath}, {"Deformation", tabDeform}, {"Spectrum", tabSpectrum},
+        static const TabDef tabs[] = {{"Plots", tabTimeSeries}, {"Energy ledger", tabEnergy}, {"Path and phase", tabPath}, {"Deformation", tabDeform}, {"Beam diagrams", tabBeamDiagrams}, {"Spectrum", tabSpectrum},
                                       {"Statistics", tabStats}, {"Modal analysis", tabModal}, {"Frequency response", tabFrf}};
-        for (int i = 0; i < 8; ++i) {
+        for (int i = 0; i < 9; ++i) {
             ImGuiTabItemFlags fl = (forceTab == i) ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
             if (ImGui::BeginTabItem(tabs[i].name, nullptr, fl)) { tabs[i].fn(*this); ImGui::EndTabItem(); }
         }

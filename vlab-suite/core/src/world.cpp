@@ -19,6 +19,7 @@ static inline double kDir(const Body& b, Vec2 r, Vec2 d) {   // effective invers
 // ====================================================================== construction / reset
 World::World(const Model& m) : model_(m) {
     model_.updateMass();
+    rebuildExprs();
     reset();
 }
 
@@ -88,12 +89,13 @@ void World::computeForces(const std::vector<BodyState>& S, double t, std::vector
         if (!b.isDynamic()) continue;
         const BodyState& s = S[i];
         F[i].y += b.massKg * env.gravity;                                        // -dV/dy of the gravity term
-        if (b.driveF != 0) {                                                     // harmonic push Q
-            double f = b.driveT > 0 ? (t >= 0 && t < b.driveT ? b.driveF * std::sin(kPi * t / b.driveT) : 0.0) : b.driveF * std::cos(b.driveW * t);
-            double a = b.driveAngleDeg * kPi / 180.0;
-            Vec2 d(f * std::cos(a), f * std::sin(a));
-            F[i] += d;
-            pin += dot(d, s.vel);
+        {
+            Vec2 d = externalForce((int)i, t);                                   // harmonic push, pulse and constant load
+            if (d.x != 0 || d.y != 0) { F[i] += d; pin += dot(d, s.vel); }
+            Vec2 fd;
+            double td = 0;
+            distributedForce(s, (int)i, t, fd, td);                              // distributed load: its resultant force and torque
+            if (fd.x != 0 || fd.y != 0 || td != 0) { F[i] += fd; tau[i] += td; pin += dot(fd, s.vel) + td * s.omega; }
         }
         if (env.airDrag) {                                                       // F = -(c1 + c2 |v|) v
             double sp = length(s.vel), c = env.drag1 + env.drag2 * sp;
@@ -183,8 +185,62 @@ void World::measure() {
 }
 
 void World::rebaseLedger() {
+    rebuildExprs();
     measure();
     ledger_.E0 = ledger_.E - (ledger_.workIn - ledger_.dissipated());
+}
+
+void World::rebuildExprs() {
+    dexpr_.assign(model_.bodies.size(), nullptr);
+    for (size_t i = 0; i < model_.bodies.size(); ++i)
+        if (model_.bodies[i].dloadType == DL_Equation) dexpr_[i] = Expr::parse(model_.bodies[i].dloadExpr);
+}
+
+Vec2 World::distributedDir(int i) const {
+    double a = model_.bodies[i].dloadAngleDeg * kPi / 180.0;
+    return Vec2(std::cos(a), std::sin(a));
+}
+
+double World::distributedAt(int i, double x, double t) const {
+    const Body& b = model_.bodies[i];
+    return distributedLoadAt(b, i < (int)dexpr_.size() ? dexpr_[i].get() : nullptr, x, t);
+}
+
+void World::distributedForce(const BodyState& s, int i, double t, Vec2& F, double& tau) const {
+    F = Vec2();
+    tau = 0;
+    const Body& b = model_.bodies[i];
+    if (b.dloadType == DL_None || b.shape.preset != ShapePreset::Box || !b.isDynamic()) return;
+    double a, z;
+    distributedLoadSpan(b, &a, &z);
+    if (z - a < 1e-9) return;
+    const int N = 48;
+    const double dx = (z - a) / N, L = b.shape.w;
+    const Vec2 dir = distributedDir(i), ex = s.rot.apply(Vec2(1, 0));
+    const Expr* e = i < (int)dexpr_.size() ? dexpr_[i].get() : nullptr;
+    for (int k = 0; k < N; ++k) {
+        double xm = a + (k + 0.5) * dx;
+        double q = distributedLoadAt(b, e, xm, t);
+        if (q == 0) continue;
+        Vec2 f = dir * (q * dx);
+        F += f;
+        tau += cross(ex * (xm - L / 2), f);
+    }
+}
+
+Vec2 World::externalForce(int i, double t) const {
+    const Body& b = model_.bodies[i];
+    Vec2 d;
+    if (b.driveF != 0) {
+        double f = b.driveT > 0 ? (t >= 0 && t < b.driveT ? b.driveF * std::sin(kPi * t / b.driveT) : 0.0) : b.driveF * std::cos(b.driveW * t);
+        double a = b.driveAngleDeg * kPi / 180.0;
+        d += Vec2(f * std::cos(a), f * std::sin(a));
+    }
+    if (b.loadN != 0) {
+        double a = (b.loadAngleDeg + (b.loadPull ? 180.0 : 0.0)) * kPi / 180.0;
+        d += Vec2(b.loadN * std::cos(a), b.loadN * std::sin(a));
+    }
+    return d;
 }
 
 LinkReading World::link(int i) const {

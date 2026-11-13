@@ -1,5 +1,7 @@
 // ui_canvas.cpp -- the drawing area: shapes, floors, springs, dampers, joints; tools; mouse interaction.
 #include <algorithm>
+#include <cctype>
+#include <functional>
 #include <cmath>
 #include <cstdio>
 #include "app.hpp"
@@ -362,20 +364,8 @@ void App::updateLiveDeformation() {
         const Body& b = m.bodies[i];
         if (!b.isDynamic()) continue;
         if (isBeamBody(b)) {
-            liveFE[i].build((int)i, b);
+            liveFE[i].build((int)i, b, m.env.deltaT);
             beamDeflection(w, liveFE[i], liveDef[i]);
-            {   // draw only what CONTACT adds: while nothing touches the beam its own-weight sag is remembered, not drawn
-                if (baseW.size() != n) { baseW.assign(n, {}); baseLatched.assign(n, 0); }
-                Deflection& d = liveDef[i];
-                if (!baseLatched[i]) { if (d.load <= 1e-6) baseW[i] = d.w; else baseLatched[i] = 1; }   // frozen at the first touch, so bounces cannot corrupt it
-                if (baseW[i].size() == d.w.size()) {
-                    d.maxAbs = d.maxSigned = d.atX = 0;
-                    for (size_t k = 0; k < d.w.size(); ++k) {
-                        d.w[k] -= baseW[i][k];
-                        if (std::fabs(d.w[k]) > d.maxAbs) { d.maxAbs = std::fabs(d.w[k]); d.maxSigned = d.w[k]; d.atX = liveFE[i].x[k]; }
-                    }
-                }
-            }
             anyBeam = true;
             cur = std::max(cur, liveDef[i].maxAbs / b.shape.w);
         } else {
@@ -418,11 +408,13 @@ void App::updateLiveDeformation() {
         }
     }
     const double target = anyBeam ? 0.06 : 0.12;                      // automatic: the worst bend shows as 6 % of the beam length
-    deformFactor = deformAuto ? (deformPeak > 1e-14 ? clampd(target / deformPeak, 1.0, 1e7) : 1.0) : (double)deformExag;
+    // bending below 0.1 micrometre per metre of length is numerical dust, not something to magnify: draw it true-scale
+    deformFactor = deformAuto ? (deformPeak > 1e-7 ? clampd(target / deformPeak, 1.0, 1e6) : 1.0) : (double)deformExag;
 }
 
 void App::drawCanvas() {
     updateLiveDeformation();
+    const Pal pal = palette();
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::Begin("Simulation", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar();
@@ -431,9 +423,10 @@ void App::drawCanvas() {
     if (size.y < 50) size.y = 50;
     canvasMin = p0;
     canvasMax = ImVec2(p0.x + size.x, p0.y + size.y);
+    ImGui::SetNextItemAllowOverlap();                                         // the Run buttons and the deformation controls sit on top of the canvas and must get their clicks
     ImGui::InvisibleButton("canvas", size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
     bool hovered = ImGui::IsItemHovered();
-    if (hovered && ImGui::IsMouseHoveringRect(overlayMin, overlayMax, false)) hovered = false;   // the deformation controls sit on the canvas
+    if (hovered && (ImGui::IsMouseHoveringRect(overlayMin, overlayMax, false) || ImGui::IsMouseHoveringRect(toolbarMin, toolbarMax, false))) hovered = false;   // the deformation controls sit on the canvas
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->PushClipRect(canvasMin, canvasMax, true);
     modeClock += ImGui::GetIO().DeltaTime;
@@ -443,7 +436,7 @@ void App::drawCanvas() {
     Model& m = design();
 
     // ---- background and grid
-    dl->AddRectFilled(canvasMin, canvasMax, IM_COL32(18, 20, 26, 255));
+    dl->AddRectFilled(canvasMin, canvasMax, pal.bg);
     if (showGrid) {
         double step = 0.1;
         const double steps[] = {0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 50};
@@ -452,14 +445,14 @@ void App::drawCanvas() {
         for (double x = std::floor(w0.x / step) * step; x <= w1.x; x += step) {
             bool major = std::fabs(std::fmod(std::round(x / step), 5.0)) < 1e-6;
             float sx = toScreen(Vec2(x, 0)).x;
-            dl->AddLine(ImVec2(sx, canvasMin.y), ImVec2(sx, canvasMax.y), std::fabs(x) < 1e-9 ? IM_COL32(90, 100, 125, 255) : (major ? IM_COL32(40, 45, 58, 255) : IM_COL32(28, 31, 40, 255)));
-            if (major && showLabels) { char b[24]; std::snprintf(b, sizeof b, "%g", x); dl->AddText(ImVec2(sx + 3, canvasMax.y - 16), IM_COL32(100, 110, 130, 255), b); }
+            dl->AddLine(ImVec2(sx, canvasMin.y), ImVec2(sx, canvasMax.y), std::fabs(x) < 1e-9 ? pal.gridAxis : (major ? pal.gridMajor : pal.gridMinor));
+            if (major && showGridNumbers) { char b[24]; std::snprintf(b, sizeof b, "%g", x); dl->AddText(ImVec2(sx + 3, canvasMax.y - 16), pal.gridText, b); }
         }
         for (double y = std::floor(w0.y / step) * step; y <= w1.y; y += step) {
             bool major = std::fabs(std::fmod(std::round(y / step), 5.0)) < 1e-6;
             float sy = toScreen(Vec2(0, y)).y;
-            dl->AddLine(ImVec2(canvasMin.x, sy), ImVec2(canvasMax.x, sy), std::fabs(y) < 1e-9 ? IM_COL32(90, 100, 125, 255) : (major ? IM_COL32(40, 45, 58, 255) : IM_COL32(28, 31, 40, 255)));
-            if (major && showLabels) { char b[24]; std::snprintf(b, sizeof b, "%g", y); dl->AddText(ImVec2(canvasMin.x + 4, sy + 2), IM_COL32(100, 110, 130, 255), b); }
+            dl->AddLine(ImVec2(canvasMin.x, sy), ImVec2(canvasMax.x, sy), std::fabs(y) < 1e-9 ? pal.gridAxis : (major ? pal.gridMajor : pal.gridMinor));
+            if (major && showGridNumbers) { char b[24]; std::snprintf(b, sizeof b, "%g", y); dl->AddText(ImVec2(canvasMin.x + 4, sy + 2), pal.gridText, b); }
         }
     }
 
@@ -479,7 +472,7 @@ void App::drawCanvas() {
         if (!bodyPose(l.a, pa, aa) || !bodyPose(l.b, pb, ab)) continue;
         ImVec2 sa = toScreen(pa + Rot(aa).apply(l.la)), sb = toScreen(pb + Rot(ab).apply(l.lb));
         bool sel = (int)i == selLink;
-        ImU32 col = sel ? IM_COL32(90, 205, 255, 255) : IM_COL32(225, 228, 238, 255);
+        ImU32 col = sel ? IM_COL32(90, 205, 255, 255) : pal.link;
         float th = sel ? 3.0f : 2.0f;
         if (l.kind == LinkKind::Spring) {
             if (ses.hasWorld() && !sel) {                         // colour by load: warm = pulling, cool = pushing
@@ -488,7 +481,7 @@ void App::drawCanvas() {
             }
             drawSpring(dl, sa, sb, col, th);
         } else if (l.kind == LinkKind::Damper) {
-            drawDamper(dl, sa, sb, sel ? col : IM_COL32(150, 158, 178, 255), th);
+            drawDamper(dl, sa, sb, sel ? col : pal.mid, th);
         } else if (l.kind == LinkKind::Rod) {
             dl->AddLine(sa, sb, sel ? col : IM_COL32(210, 190, 120, 255), th + 2);
             dl->AddCircleFilled(sa, 4, IM_COL32(40, 40, 40, 255));
@@ -613,6 +606,10 @@ void App::drawCanvas() {
                 const Deflection& dd = liveDef[i];
                 const int NN = (int)fe.x.size();
                 const double k = deformFactor, l = fe.L / (NN - 1);
+                // thermal growth about the held end, exaggerated like the bending (own factor so a 0.1 % growth is visible)
+                const double eps = dd.epsT, tfac = deformAuto ? clampd(0.03 / std::max(std::fabs(eps), 1e-12), 1.0, 2.0e4) : (double)deformExag;
+                const double sx = 1.0 + eps * tfac, anc = dd.anchorX;
+                auto xs = [&](int j) { return anc + (fe.x[j] - anc) * sx; };
                 Rot rr(a);
                 Vec2 ex = rr.apply(Vec2(1, 0)), ey = rr.apply(Vec2(0, 1));
                 std::vector<Vec2> top(NN), bot(NN);
@@ -620,7 +617,7 @@ void App::drawCanvas() {
                 double kmax = 1e-30;
                 for (int j = 0; j < NN; ++j) {
                     double slope = j == 0 ? (dd.w[1] - dd.w[0]) / l : (j == NN - 1 ? (dd.w[j] - dd.w[j - 1]) / l : (dd.w[j + 1] - dd.w[j - 1]) / (2 * l));
-                    Vec2 cl = p + ex * fe.x[j] + ey * (k * dd.w[j]);
+                    Vec2 cl = p + ex * xs(j) + ey * (k * dd.w[j]);
                     Vec2 nn = normalized(ey - ex * (k * slope));
                     top[j] = cl - nn * (fe.h / 2);
                     bot[j] = cl + nn * (fe.h / 2);
@@ -634,7 +631,9 @@ void App::drawCanvas() {
                 }
                 ImVec4 base = ImGui::ColorConvertU32ToFloat4(fill), hot(1.0f, 0.30f, 0.15f, 1.0f);
                 for (int j = 0; j + 1 < NN; ++j) {
-                    float t = (m.env.realistic && dd.maxAbs > 1e-15) ? (float)std::min(1.0, 0.5 * (kap[j] + kap[j + 1]) / kmax) : 0.0f;   // stress colours only in Realistic mode
+                    // stress colours only in Realistic mode, and only when the bending is big enough to matter (1e-9 .. 1e-6 of the length fades in)
+                    const double rel = dd.maxAbs / fe.L, signif = clampd((std::log10(std::max(rel, 1e-30)) + 9.0) / 3.0, 0.0, 1.0);
+                    float t = m.env.realistic ? (float)(signif * std::min(1.0, 0.5 * (kap[j] + kap[j + 1]) / kmax)) : 0.0f;
                     ImVec4 cc(base.x + (hot.x - base.x) * t, base.y + (hot.y - base.y) * t, base.z + (hot.z - base.z) * t, 1.0f);
                     ImVec2 q[4] = {toScreen(top[j]), toScreen(top[j + 1]), toScreen(bot[j + 1]), toScreen(bot[j])};
                     dl->AddConvexPolyFilled(q, 4, ImGui::ColorConvertFloat4ToU32(cc));
@@ -650,7 +649,7 @@ void App::drawCanvas() {
                     if (l.a == (int)i && l.kind != LinkKind::Spring && l.kind != LinkKind::Damper && l.kind != LinkKind::Rod) { sup = l.kind; break; }
                 const float ca = (float)std::cos(a), sa_ = (float)std::sin(a);
                 auto R = [&](float x, float y) { return ImVec2(c.x + x * ca - y * sa_, c.y + x * sa_ + y * ca); };
-                ImU32 ink = sel ? IM_COL32(90, 205, 255, 255) : IM_COL32(200, 205, 215, 255);
+                ImU32 ink = sel ? IM_COL32(90, 205, 255, 255) : pal.ink;
                 if (sup == LinkKind::Weld) {                                           // fixed support: a hatched wall block
                     dl->AddRectFilled(R(-16, 0), R(16, 0), ink);
                     ImVec2 q[4] = {R(-16, 0), R(16, 0), R(16, 8), R(-16, 8)};
@@ -676,7 +675,7 @@ void App::drawCanvas() {
             } else if (b.shape.preset == ShapePreset::Line) {                          // a floor: a bright line with hatching on its underside
                 Rot rr(a);
                 ImVec2 e0 = toScreen(p + rr.apply(Vec2(-b.shape.w / 2, 0))), e1 = toScreen(p + rr.apply(Vec2(b.shape.w / 2, 0)));
-                ImU32 ink = sel ? IM_COL32(90, 205, 255, 255) : IM_COL32(205, 212, 228, 255);
+                ImU32 ink = sel ? IM_COL32(90, 205, 255, 255) : pal.ink;
                 float L = std::sqrt((e1.x - e0.x) * (e1.x - e0.x) + (e1.y - e0.y) * (e1.y - e0.y));
                 if (L > 1) {
                     ImVec2 u((e1.x - e0.x) / L, (e1.y - e0.y) / L), nn(-u.y, u.x);          // nn: screen-side of local +y (the hatched side)
@@ -684,7 +683,7 @@ void App::drawCanvas() {
                     if (nn.x * side.x + nn.y * side.y < 0) { nn.x = -nn.x; nn.y = -nn.y; }
                     for (float t = 0; t <= L; t += 11.0f) {
                         ImVec2 q0(e0.x + u.x * t, e0.y + u.y * t);
-                        dl->AddLine(q0, ImVec2(q0.x + nn.x * 9.0f - u.x * 7.0f, q0.y + nn.y * 9.0f - u.y * 7.0f), IM_COL32(120, 128, 148, 255), 1.3f);
+                        dl->AddLine(q0, ImVec2(q0.x + nn.x * 9.0f - u.x * 7.0f, q0.y + nn.y * 9.0f - u.y * 7.0f), pal.dim, 1.3f);
                     }
                 }
                 dl->AddLine(e0, e1, ink, sel ? 4.0f : 3.0f);
@@ -712,27 +711,106 @@ void App::drawCanvas() {
                 }
                 dl->AddCircleFilled(c, 2.5f, IM_COL32(10, 12, 16, 220));
             }
-            if (showLabels && b.kind != BodyKind::Anchor) {
-                char lab[96];
-                if (b.kind == BodyKind::Static) std::snprintf(lab, sizeof lab, "%s  mu %.2f", b.name.c_str(), b.mat.muK);
-                else std::snprintf(lab, sizeof lab, "%s  %.3g kg", b.name.c_str(), b.massKg);
-                ImVec2 ts = ImGui::CalcTextSize(lab);
-                float off = b.shape.isCircle() ? (float)(b.shape.radius * scale) + 4 : (float)(b.shape.boundingRadius() * scale) * 0.55f + 4;
-                if (b.kind == BodyKind::Static) {
-                    ImVec2 lp = c;                                           // label at the upper-left corner of a floor, away from whatever sits on it
-                    Rot rr(a);
-                    float best = 1e9f;
-                    for (const Vec2& vv : b.shape.verts) { ImVec2 q = toScreen(p + rr.apply(vv)); if (q.x < best) { best = q.x; lp = q; } }
-                    dl->AddText(ImVec2(lp.x + 4, lp.y - ts.y - 3), IM_COL32(170, 178, 198, 230), lab);
-                } else {
-                    dl->AddText(ImVec2(c.x - ts.x * 0.5f, c.y - off - ts.y), IM_COL32(205, 210, 225, 230), lab);
+            if (b.isDynamic() && b.shape.preset == ShapePreset::Box && (b.dloadType != DL_None || (sel && m.env.deadLoad && isBeamBody(b)))) {
+                Rot rr(a);
+                const Vec2 exw = rr.apply(Vec2(1, 0)), eyw = rr.apply(Vec2(0, 1));
+                const double L = b.shape.w;
+                auto diagram = [&](Vec2 dir, int n, double x0, double x1, std::function<double(double)> qf, ImU32 col, const char* name) {
+                    double qmax = 1e-12;
+                    for (int k = 0; k <= 60; ++k) qmax = std::max(qmax, std::fabs(qf(x0 + (x1 - x0) * k / 60.0)));
+                    std::vector<ImVec2> env;
+                    for (int k = 0; k <= n; ++k) {
+                        double xm = x0 + (x1 - x0) * k / n, q = qf(xm);
+                        if (std::fabs(q) < 1e-9 * qmax) continue;
+                        Vec2 de = q > 0 ? dir : dir * -1.0;
+                        double half = std::fabs(dot(dir, eyw)) * b.shape.h / 2;
+                        Vec2 head = p + exw * (xm - L / 2) - de * half;
+                        double len = (8.0 + 46.0 * std::fabs(q) / qmax) / scale;
+                        Vec2 tail = head - de * len;
+                        drawArrow(dl, toScreen(tail), toScreen(head), col);
+                        env.push_back(toScreen(tail));
+                    }
+                    if (env.size() > 1) dl->AddPolyline(env.data(), (int)env.size(), col, 1.5f, 0);
+                    if (!env.empty()) dl->AddText(ImVec2(env.front().x, env.front().y - 18), col, name);
+                };
+                if (b.dloadType != DL_None) {
+                    std::string err;
+                    std::shared_ptr<const Expr> ex = b.dloadType == DL_Equation ? Expr::cached(b.dloadExpr, &err) : nullptr;
+                    const double tnow2 = ses.hasWorld() ? ses.simTime() : 0.0;
+                    double x0, x1;
+                    distributedLoadSpan(b, &x0, &x1);
+                    const double ang = b.dloadAngleDeg * kPi / 180.0;
+                    char nm[96];
+                    if (b.dloadType == DL_Equation) std::snprintf(nm, sizeof nm, "q(x) = %s", b.dloadExpr.c_str());
+                    else std::snprintf(nm, sizeof nm, "%.0f N/m (%.1f kg/m)", b.dloadN, b.dloadN / 9.80665);
+                    diagram(Vec2(std::cos(ang), std::sin(ang)), 16, x0, x1, [&](double x) { return distributedLoadAt(b, ex.get(), x, tnow2); }, IM_COL32(255, 150, 40, 255), nm);
                 }
+                if (sel && m.env.deadLoad && isBeamBody(b)) {
+                    const double mu = b.massKg / L, w = mu * m.env.gravity;
+                    char nm[96];
+                    std::snprintf(nm, sizeof nm, "dead load %.0f N/m (%.1f kg/m)", w, mu);
+                    diagram(Vec2(0, 1), 10, 0, L, [&](double) { return w; }, pal.mid, nm);
+                }
+            }
+            if (b.isDynamic() && b.loadN > 0) {                                       // an applied load: an arrow from the centre, longer for a bigger load
+                double a = (b.loadAngleDeg + (b.loadPull ? 180.0 : 0.0)) * kPi / 180.0;
+                float len = 46.0f + 22.0f * (float)std::log10(1.0 + b.loadN / 10.0);
+                ImVec2 tip(c.x + (float)std::cos(a) * len, c.y + (float)std::sin(a) * len);
+                ImU32 lc = IM_COL32(255, 150, 40, 255);
+                drawArrow(dl, c, tip, lc);
+                char lb[64];
+                std::snprintf(lb, sizeof lb, "%s %.0f N (%.1f kg)", b.loadPull ? "pull" : "push", b.loadN, b.loadN / 9.80665);
+                dl->AddText(ImVec2(tip.x + 6, tip.y - 8), lc, lb);
             }
             if (showVectors && ses.hasWorld() && b.isDynamic()) {
                 const BodyState& s = ses.world()->state()[i];
                 drawArrow(dl, c, toScreen(p + s.vel * 0.25), IM_COL32(80, 220, 120, 255));
             }
         }
+    }
+
+    // ---- legend (bottom left): replaces the names that used to float over every body
+    if (showLabels && !m.bodies.empty()) {
+        struct Row { ImU32 col; std::string text; };
+        std::vector<Row> rows;
+        auto baseName = [](std::string n) {                                            // "Domino 7", "Block 2-1" -> "Domino", "Block"
+            while (!n.empty() && (std::isdigit((unsigned char)n.back()) || n.back() == '-' || n.back() == ' ')) n.pop_back();
+            return n.empty() ? std::string("Body") : n;
+        };
+        std::vector<std::string> seen;
+        for (size_t i = 0; i < m.bodies.size(); ++i) {
+            const Body& b = m.bodies[i];
+            if (b.kind == BodyKind::Anchor) continue;
+            std::string bn = baseName(b.name);
+            int count = 0;
+            for (const Body& o : m.bodies) if (o.kind != BodyKind::Anchor && baseName(o.name) == bn) ++count;
+            if (std::find(seen.begin(), seen.end(), bn) != seen.end()) continue;
+            seen.push_back(bn);
+            char t[160];
+            const std::string shown = count > 1 ? bn : b.name;
+            if (b.kind == BodyKind::Static) std::snprintf(t, sizeof t, "%s%s   mu %.2f", shown.c_str(), count > 1 ? (" x" + std::to_string(count)).c_str() : "", b.mat.muK);
+            else std::snprintf(t, sizeof t, "%s%s   %.3g kg%s", shown.c_str(), count > 1 ? (" x" + std::to_string(count)).c_str() : "", b.massKg, count > 1 ? " each" : "");
+            ImU32 sw = b.kind == BodyKind::Static ? pal.ink : argbToImU32(b.color);
+            rows.push_back({sw, t});
+        }
+        const float rowH = 19.0f;
+        const int maxRows = std::max(2, (int)((canvasMax.y - canvasMin.y - 190) / rowH));
+        size_t shownRows = std::min<size_t>(rows.size(), (size_t)maxRows);
+        float w = 120;
+        for (size_t k = 0; k < shownRows; ++k) w = std::max(w, ImGui::CalcTextSize(rows[k].text.c_str()).x + 34);
+        std::string more;
+        if (rows.size() > shownRows) { more = "+ " + std::to_string(rows.size() - shownRows) + " more"; w = std::max(w, ImGui::CalcTextSize(more.c_str()).x + 34); }
+        float h = (float)(shownRows + (more.empty() ? 0 : 1)) * rowH + 10;
+        ImVec2 p0(canvasMin.x + 10, canvasMax.y - 46 - h);
+        dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + h), pal.panel, 5.0f);
+        dl->AddRect(p0, ImVec2(p0.x + w, p0.y + h), pal.gridAxis, 5.0f);
+        for (size_t k = 0; k < shownRows; ++k) {
+            float y = p0.y + 5 + k * rowH;
+            dl->AddRectFilled(ImVec2(p0.x + 8, y + 4), ImVec2(p0.x + 20, y + 15), rows[k].col, 2.0f);
+            dl->AddRect(ImVec2(p0.x + 8, y + 4), ImVec2(p0.x + 20, y + 15), pal.gridAxis, 2.0f);
+            dl->AddText(ImVec2(p0.x + 27, y + 1), pal.text, rows[k].text.c_str());
+        }
+        if (!more.empty()) dl->AddText(ImVec2(p0.x + 27, p0.y + 5 + shownRows * rowH + 1), pal.dim, more.c_str());
     }
 
     // ---- contacts
@@ -811,18 +889,18 @@ void App::drawCanvas() {
     const char* toolNames[] = {"Select / move", "Ball", "Block", "Polygon", "Wedge", "Floor line", "Anchor point", "Beam", "Spring", "Damper", "Rigid rod", "Pin joint", "Fixed (weld) joint", "Pin support", "Fixed support (cantilever)", "Roller support"};
     char hud[200];
     std::snprintf(hud, sizeof hud, "Tool: %s", toolNames[(int)tool]);
-    dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 8), IM_COL32(200, 205, 220, 255), hud);
-    if (tool == Tool::Select) dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 26), IM_COL32(120, 128, 148, 255), state == RunState::Design ? "Click to select, drag to move.  Wheel zooms, right-drag pans." : "Drag a body to push it with the mouse.");
-    else if (linkFirst >= 0) dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 26), IM_COL32(90, 205, 255, 255), "Now click the second body.");
-    else if (tool == Tool::Spring || tool == Tool::Damper || tool == Tool::Rod || tool == Tool::Pin || tool == Tool::Weld) dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 26), IM_COL32(120, 128, 148, 255), "Click one body, then another. Esc cancels.");
-    else if (tool == Tool::SupportPin || tool == Tool::SupportFixed || tool == Tool::SupportRoller) dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 26), IM_COL32(120, 128, 148, 255), "Click a beam or body: the support snaps to its ends and middle. Q / E turn it. Shift keeps the tool.");
-    else dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 26), IM_COL32(120, 128, 148, 255), "Click to place. Q / E (or Ctrl+wheel) rotate it first. Shift keeps placing; Esc returns to Select; Alt ignores the grid.");
+    dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 44), pal.text, hud);
+    if (tool == Tool::Select) dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 62), pal.dim, state == RunState::Design ? "Click to select, drag to move.  Wheel zooms, right-drag pans." : "Drag a body to push it with the mouse.");
+    else if (linkFirst >= 0) dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 62), IM_COL32(90, 205, 255, 255), "Now click the second body.");
+    else if (tool == Tool::Spring || tool == Tool::Damper || tool == Tool::Rod || tool == Tool::Pin || tool == Tool::Weld) dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 62), pal.dim, "Click one body, then another. Esc cancels.");
+    else if (tool == Tool::SupportPin || tool == Tool::SupportFixed || tool == Tool::SupportRoller) dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 62), pal.dim, "Click a beam or body: the support snaps to its ends and middle. Q / E turn it. Shift keeps the tool.");
+    else dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 62), pal.dim, "Click to place. Q / E (or Ctrl+wheel) rotate it first. Shift keeps placing; Esc returns to Select; Alt ignores the grid.");
 
     char st[160];
     double tnow = ses.hasWorld() ? ses.simTime() : (haveResults && !ses.telemetry().t.empty() ? ses.telemetry().t.back() : 0.0);
     std::snprintf(st, sizeof st, "%s   t = %.2f s / %.1f s   %s%s", stateName(), tnow, m.run.duration, m.env.realistic ? "REALISTIC" : "IDEAL", (slowRun && state == RunState::Running) ? "   (slower than real time)" : "");
     ImVec2 ts = ImGui::CalcTextSize(st);
-    ImU32 sc = state == RunState::Running ? IM_COL32(110, 230, 150, 255) : (state == RunState::Design ? IM_COL32(255, 214, 120, 255) : IM_COL32(120, 215, 255, 255));
+    ImU32 sc = state == RunState::Running ? IM_COL32(110, 230, 150, 255) : (state == RunState::Design ? pal.amber : IM_COL32(120, 215, 255, 255));
     dl->AddText(ImVec2(canvasMax.x - ts.x - 12, canvasMin.y + 8), sc, st);
     if (recording) {
         dl->AddCircleFilled(ImVec2(canvasMax.x - ts.x - 26, canvasMin.y + 16), 6, IM_COL32(235, 60, 60, 255));
@@ -832,30 +910,111 @@ void App::drawCanvas() {
         dl->AddRect(canvasMin, canvasMax, IM_COL32(235, 60, 60, 160), 0, 3.0f);
     }
     if (m.bodies.empty())
-        dl->AddText(ImVec2((canvasMin.x + canvasMax.x) / 2 - 190, (canvasMin.y + canvasMax.y) / 2 - 10), IM_COL32(150, 158, 178, 255), "Empty canvas: choose a shape in the Library, then click here.");
+        dl->AddText(ImVec2((canvasMin.x + canvasMax.x) / 2 - 190, (canvasMin.y + canvasMax.y) / 2 - 10), pal.mid, "Empty canvas: choose a shape in the Library, then click here.");
     // scale bar
     {
         double len = 1.0;
         if (scale < 30) len = 5; else if (scale > 200) len = 0.5;
         float px = (float)(len * scale);
         ImVec2 a(canvasMin.x + 12, canvasMax.y - 28);
-        dl->AddLine(a, ImVec2(a.x + px, a.y), IM_COL32(150, 158, 178, 255), 2.0f);
+        dl->AddLine(a, ImVec2(a.x + px, a.y), pal.mid, 2.0f);
         char sb[32];
         std::snprintf(sb, sizeof sb, "%g m", len);
-        dl->AddText(ImVec2(a.x + px + 6, a.y - 8), IM_COL32(150, 158, 178, 255), sb);
+        dl->AddText(ImVec2(a.x + px + 6, a.y - 8), pal.mid, sb);
     }
     if (modeShown >= 0 && haveModal && state == RunState::Design && modeShown < (int)modal.modes.size()) {
         char mb[120];
         std::snprintf(mb, sizeof mb, "Animating mode %d: %.3f Hz", modeShown + 1, modal.modes[modeShown].freqHz);
-        dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 44), IM_COL32(255, 214, 120, 255), mb);
+        dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 44), pal.amber, mb);
     }
+    // ---- run controls (top left of the canvas): Run, Pause, Stop, Step, Compute
+    toolbarMin = toolbarMax = ImVec2(0, 0);
+    if (!recording) {
+        const bool hasDyn = m.dynamicCount() > 0, computing = state == RunState::Computing;
+        auto colored = [](float r, float g, float b) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(r, g, b, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(std::min(1.0f, r + 0.10f), std::min(1.0f, g + 0.10f), std::min(1.0f, b + 0.10f), 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(r * 0.8f, g * 0.8f, b * 0.8f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+        };
+        ImGui::SetCursorScreenPos(ImVec2(canvasMin.x + 10, canvasMin.y + 6));
+        ImGui::BeginGroup();
+        colored(0.14f, 0.56f, 0.30f);
+        ImGui::BeginDisabled(!hasDyn || state == RunState::Running || computing);
+        const char* rl = state == RunState::Paused ? "Resume" : (state == RunState::Done ? "Run again" : "Run");
+        if (ImGui::Button(rl, ImVec2(104, 30))) {
+            if (state == RunState::Design) startRun(true);
+            else if (state == RunState::Done) { stopRun(); startRun(true); }
+            else if (state == RunState::Paused) pause();
+        }
+        ImGui::EndDisabled();
+        ImGui::PopStyleColor(4);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Run in real time (Space). You can drag bodies while it runs.");
+        ImGui::SameLine();
+        colored(0.80f, 0.55f, 0.08f);
+        ImGui::BeginDisabled(state != RunState::Running);
+        if (ImGui::Button("Pause", ImVec2(88, 30))) pause();
+        ImGui::EndDisabled();
+        ImGui::PopStyleColor(4);
+        ImGui::SameLine();
+        colored(0.78f, 0.20f, 0.20f);
+        ImGui::BeginDisabled(state == RunState::Design);
+        if (ImGui::Button("Stop", ImVec2(88, 30))) stopRun();
+        ImGui::EndDisabled();
+        ImGui::PopStyleColor(4);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop and go back to the drawn start (Esc). The data of the run stays available.");
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!hasDyn || state == RunState::Running || computing);
+        if (ImGui::Button("Step", ImVec2(70, 30))) stepOnce();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Advance by 1/60 of a second.");
+        ImGui::SameLine();
+        if (ImGui::Button("Compute all", ImVec2(110, 30))) { if (state == RunState::Done || state == RunState::Paused) stopRun(); startRun(false); }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Runs the whole duration as fast as the computer can, then shows all the data.");
+        ImGui::EndGroup();
+        toolbarMin = ImGui::GetItemRectMin();
+        toolbarMax = ImGui::GetItemRectMax();
+        toolbarMin.x -= 4; toolbarMin.y -= 4; toolbarMax.x += 4; toolbarMax.y += 4;
+    }
+
     // ---- deformation controls and readout (hidden while recording so the video stays clean)
+    static float lastStripW = 800.0f;
     overlayMin = overlayMax = ImVec2(0, 0);
     bool anyDeformable = false;
     for (const Body& b : m.bodies) anyDeformable = anyDeformable || b.isDynamic();
     if (!recording && anyDeformable) {
-        float y0 = canvasMin.y + 30;                                         // top right: nobody places objects there
-        float stripW = overlayMax.x > overlayMin.x ? overlayMax.x - overlayMin.x - 8 : 760.0f;
+        // the readout lines are collected first so the control strip can sit at the bottom right with the lines stacked above it
+        struct Ln { std::string t; ImU32 c; };
+        std::vector<Ln> lines;
+        if (showDeform) {
+            char db[200];
+            if (!ses.hasWorld()) {
+                lines.push_back({"Run the model to see bodies bend (beams) and squash (blocks).", pal.mid});
+            } else {
+                std::snprintf(db, sizeof db, "Drawn x%.0f larger than real%s", deformFactor, deformFactor > 1.5 ? "  (grey outline = undeformed)" : "  (true scale)");
+                lines.push_back({db, pal.amber});
+                std::vector<size_t> order;                                           // the three most bent bodies
+                for (size_t i = 0; i < m.bodies.size() && i < liveDef.size(); ++i)
+                    if (m.bodies[i].isDynamic() && i < liveFE.size() && liveFE[i].valid) order.push_back(i);
+                std::sort(order.begin(), order.end(), [&](size_t p, size_t q) { return liveDef[p].maxAbs / liveFE[p].L > liveDef[q].maxAbs / liveFE[q].L; });
+                if (order.size() > 3) order.resize(3);
+                for (size_t i : order) {
+                    double real = i < liveTarget.size() ? liveTarget[i] : liveDef[i].maxAbs;       // the physical value, not the eased drawing
+                    double mm = real * 1000.0;
+                    if (real < 1e-12) std::snprintf(db, sizeof db, "%s: not loaded, drawn straight", m.bodies[i].name.c_str());
+                    else std::snprintf(db, sizeof db, "%s bends %.4g %s at x = %.2f m   (L / %.0f)", m.bodies[i].name.c_str(), mm < 0.1 ? mm * 1000.0 : mm, mm < 0.1 ? "um" : "mm", liveDef[i].atX, liveFE[i].L / real);
+                    lines.push_back({db, pal.text});
+                    if (std::fabs(liveDef[i].epsT) > 0) {                                   // thermal expansion
+                        const double e0 = liveDef[i].epsT;
+                        if (liveDef[i].restrained) std::snprintf(db, sizeof db, "%s: held at both ends, heating gives axial stress %.1f MPa", m.bodies[i].name.c_str(), liveDef[i].axialSigma / 1e6);
+                        else std::snprintf(db, sizeof db, "%s: free to grow %.3f mm (%.0f microstrain)", m.bodies[i].name.c_str(), e0 * liveFE[i].L * 1000.0, e0 * 1e6);
+                        lines.push_back({db, IM_COL32(255, 150, 60, 255)});
+                    }
+                }
+            }
+        }
+        const float y0 = canvasMax.y - 34;                                           // the strip: bottom right of the canvas
+        float stripW = lastStripW;
         ImGui::SetCursorScreenPos(ImVec2(std::max(canvasMin.x + 10, canvasMax.x - stripW - 12), y0));
         ImGui::BeginGroup();
         ImGui::Checkbox("Show deformation", &showDeform);
@@ -863,6 +1022,9 @@ void App::drawCanvas() {
             ImGui::SameLine();
             ImGui::Checkbox("Realistic", &deformRealistic);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Blocks sink with the beam and their underside takes the shape of its bent surface, so the two deform together.");
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Dead load", &design().env.deadLoad)) edited();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional: include each beam's own weight (its mass per metre x g) as a distributed load in the bending. Off (the default): only the loads you apply bend it.");
             ImGui::SameLine();
             ImGui::Checkbox("Auto", &deformAuto);
             ImGui::SameLine();
@@ -879,32 +1041,12 @@ void App::drawCanvas() {
         ImGui::EndGroup();
         overlayMin = ImGui::GetItemRectMin();
         overlayMax = ImGui::GetItemRectMax();
+        lastStripW = overlayMax.x - overlayMin.x;
         overlayMin.x -= 4; overlayMin.y -= 4; overlayMax.x += 4; overlayMax.y += 4;
-        if (showDeform) {
-            char db[200];
-            if (!ses.hasWorld()) {
-                const char* hint = "Run the model to see bodies bend (beams) and squash (blocks).";
-                dl->AddText(ImVec2(canvasMax.x - ImGui::CalcTextSize(hint).x - 14, y0 + 24), IM_COL32(150, 158, 178, 255), hint);
-            } else {
-                std::snprintf(db, sizeof db, "Drawn x%.0f larger than real%s", deformFactor, deformFactor > 1.5 ? "  (grey outline = undeformed)" : "  (true scale)");
-                dl->AddText(ImVec2(canvasMax.x - ImGui::CalcTextSize(db).x - 14, y0 + 24), IM_COL32(255, 214, 120, 255), db);
-                float yy = y0 + 42;
-                std::vector<size_t> order;                                           // the three most bent bodies
-                for (size_t i = 0; i < m.bodies.size() && i < liveDef.size(); ++i)
-                    if (m.bodies[i].isDynamic() && i < liveFE.size() && liveFE[i].valid) order.push_back(i);
-                std::sort(order.begin(), order.end(), [&](size_t p, size_t q) { return liveDef[p].maxAbs / liveFE[p].L > liveDef[q].maxAbs / liveFE[q].L; });
-                if (order.size() > 3) order.resize(3);
-                for (size_t i : order) {
-                    {
-                        double real = i < liveTarget.size() ? liveTarget[i] : liveDef[i].maxAbs;       // the physical value, not the eased drawing
-                        double mm = real * 1000.0;
-                        if (real < 1e-12) std::snprintf(db, sizeof db, "%s: no load from contact, drawn straight", m.bodies[i].name.c_str());
-                        else std::snprintf(db, sizeof db, "%s bends %.4g %s under contact at x = %.2f m   (L / %.0f)", m.bodies[i].name.c_str(), mm < 0.1 ? mm * 1000.0 : mm, mm < 0.1 ? "um" : "mm", liveDef[i].atX, liveFE[i].L / real);
-                        dl->AddText(ImVec2(canvasMax.x - ImGui::CalcTextSize(db).x - 14, yy), IM_COL32(200, 205, 220, 230), db);
-                        yy += 16;
-                    }
-                }
-            }
+        float yy = y0 - 8 - 16.0f * (float)lines.size();                             // the readout, right aligned, just above the strip
+        for (const Ln& l : lines) {
+            dl->AddText(ImVec2(canvasMax.x - ImGui::CalcTextSize(l.t.c_str()).x - 14, yy), l.c, l.t.c_str());
+            yy += 16;
         }
     }
     dl->PopClipRect();

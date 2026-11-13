@@ -10,6 +10,8 @@
 #include <cstdint>
 #include <unordered_map>
 #include <vector>
+#include <memory>
+#include "expr.hpp"
 #include "model.hpp"
 
 namespace vlab {
@@ -61,6 +63,9 @@ public:
     long long stepCount() const { return steps_; }
     bool healthy() const { return healthy_; }         // false once numbers blow up (NaN / huge)
 
+    double distributedAt(int body, double x, double t) const;   // distributed-load intensity (N/m, along distributedDir) at x metres from the body's left end
+    Vec2 distributedDir(int body) const;
+    Vec2 externalForce(int body, double t) const;      // the push on a body at time t: its harmonic / pulse force plus its constant load
     const std::vector<BodyState>& state() const { return S_; }
     const Ledger& ledger() const { return ledger_; }
     const std::vector<ContactInfo>& contacts() const { return contactInfo_; }
@@ -104,6 +109,9 @@ private:
     void computeForces(const std::vector<BodyState>& S, double t, std::vector<Vec2>& F, std::vector<double>& tau,
                        double* pViscous, double* pDrag, double* pIn) const;
     double potentialEnergy(const std::vector<BodyState>& S) const;
+    void distributedForce(const BodyState& s, int i, double t, Vec2& F, double& tau) const;   // total force and torque (about the centre) of the distributed load
+    void rebuildExprs();
+    std::vector<std::shared_ptr<const Expr>> dexpr_;
     void stepSmooth(double h);
     void stepConstrained(double h);
     void buildContacts();

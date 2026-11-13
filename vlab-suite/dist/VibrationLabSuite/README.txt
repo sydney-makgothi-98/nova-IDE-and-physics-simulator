@@ -1,4 +1,4 @@
-VIBRATION LAB SUITE 1.2
+VL LAB MECHANICS SUITE 1.2
 A dynamics and vibrations sandbox, by Team NOVA
 ==================================================
 
@@ -39,6 +39,26 @@ THE FIVE-MINUTE TOUR
                            stress and span / deflection. Set the stiffness E in Properties > Material.
              Examples      five new Complex examples: car suspension, railgun, truck on a bridge, crank-slider engine,
                            pendulum and domino chain. A body's push can now be a single pulse (Properties > Pulse length).
+             Layout        one sidebar on the left: the navbar on top, then Run / Properties / Environment as tabs under it, so the
+                           canvas gets the whole width. The names that floated over bodies are now a legend at the bottom left.
+             Dashboard     the front page: a cover video, the design you are working on and a card for every saved project.
+                           To use your own cover video press "Choose cover video..." (an H.264 .mp4); it is copied to
+                           Documents\Vibration Lab Suite\dashboard_cover.mp4. You can also drop dashboard_cover.mp4 next to the exe.
+             Loads         select a moving object: Properties > Apply a load (push or pull, newtons with a linked kilograms field, any
+                           direction), and Distributed load for a box or beam: uniform, triangular (three kinds) or your own equation q(x)
+                           with trig, polynomial, exp, sqrt ... (x = distance from the left end, L = length, t = time). Optional Dead load
+                           (the beam's own weight per metre) is a checkbox on the canvas; it is off unless you switch it on.
+             Sections      Properties > Cross-section: rectangle, circle, hollow box, tube, I-beam, T-beam, channel. It gives the area, the
+                           second moment of area I, the section modulus Z and the neutral axis, and the beam is as stiff as that I says.
+             Diagrams      Telemetry > Beam diagrams: load, shear force, bending moment and deflection along the beam at any instant, and
+                           Cross-section stress: bending, axial and shear stress through the depth at any position along the beam.
+             Temperature   Properties > Temperature (and the Environment panel for the whole scene): a temperature change makes a beam
+                           grow (free end) or carry stress -E alpha dT (held at both ends); a hotter lower face bows it by alpha dT L^2 / 8 h.
+             Sidebar       one column on the left, in headed groups: Dashboard and Workspace; DESIGN TOOLS (select, objects, ground and
+                           supports, connections, examples); SETTINGS (Physical settings, Object properties, Simulation setup, Grid
+                           settings, Data extraction: each opens in place under its button); VIEW (light or dark). The open design and
+                           Save sit at the bottom. Run, Pause, Stop, Step and Compute are along the top of the canvas.
+             Theme         View > Light theme / Dark theme, or the button under the logo. The choice is remembered.
              Graphs        steady axes (no flicker) and the Spectrum / Plots tabs open on a signal that actually moves.
 
 5. EXPORT    "Export to Excel (.xlsx) with charts" creates a workbook:

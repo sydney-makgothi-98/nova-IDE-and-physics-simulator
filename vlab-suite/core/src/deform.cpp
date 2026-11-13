@@ -9,13 +9,21 @@ bool isBeamBody(const Body& b) {
 }
 
 // ====================================================================== the beam model
-void BeamFE::build(int bodyIndex, const Body& b) {
+void BeamFE::build(int bodyIndex, const Body& b, double envDeltaT) {
     body = bodyIndex;
     L = b.shape.w;
-    h = b.shape.h;
+    sec = makeSection(b);
+    h = sec.H;
     E = b.mat.youngs;
-    I = h * h * h / 12.0;                          // per metre of depth
+    I = sec.I;                                     // from the cross-section (a plain slab: h^3 / 12 per metre of depth)
+    A = sec.A;
+    cTop = sec.cTop; cBot = sec.cBot; cMax = sec.cMax;
     EI = E * I;
+    alphaT = b.mat.alphaT;
+    dT = b.tempDelta + envDeltaT;
+    dTg = b.tempGrad;
+    epsT = alphaT * dT;                            // free (unrestrained) strain
+    kappaT = h > 1e-9 ? -alphaT * dTg / h : 0.0;   // free curvature: a hotter lower face makes the middle sag (w is positive downwards)
     mu = b.massKg / std::max(1e-9, L);
     const int N = elements;
     x.resize(N + 1);
@@ -50,7 +58,7 @@ void BeamFE::build(int bodyIndex, const Body& b) {
 
 namespace {
 struct Load { double x, P, M; };
-struct Support { double x; bool fixed; };
+struct Support { double x; bool fixed; bool axial; };   // axial: it holds the beam against sliding along its length (a pin or a fixed support)
 }
 
 void beamDeflection(const World& world, const BeamFE& fe, Deflection& out) {
@@ -77,7 +85,7 @@ void beamDeflection(const World& world, const BeamFE& fe, Deflection& out) {
         double x = xOf(c.point);
         loads.push_back({x, dot(c.normal * (sign * F), ey), 0.0});
         out.load += F;
-        if (other >= 0 && other < (int)m.bodies.size() && m.bodies[other].kind != BodyKind::Dynamic) sups.push_back({x, false});
+        if (other >= 0 && other < (int)m.bodies.size() && m.bodies[other].kind != BodyKind::Dynamic) sups.push_back({x, false, false});
     }
     for (size_t i = 0; i < m.links.size(); ++i) {                         // springs, dampers, supports and joints
         const Link& l_ = m.links[i];
@@ -98,9 +106,29 @@ void beamDeflection(const World& world, const BeamFE& fe, Deflection& out) {
         double x;
         if (l_.b == fe.body) { x = xOf(pb); loads.push_back({x, dot(R, ey), r.moment}); other = l_.a; }
         else { x = xOf(pa); loads.push_back({x, dot(R * -1.0, ey), -r.moment}); other = l_.b; }
-        if (other >= 0 && other < (int)m.bodies.size() && m.bodies[other].kind != BodyKind::Dynamic) sups.push_back({x, l_.kind == LinkKind::Weld});
+        if (other >= 0 && other < (int)m.bodies.size() && m.bodies[other].kind != BodyKind::Dynamic) sups.push_back({x, l_.kind == LinkKind::Weld, l_.kind == LinkKind::Weld || l_.kind == LinkKind::Pin});
     }
-    const double qg = fe.mu * m.env.gravity * ey.y;                       // own weight, transverse part per metre
+    {   // an applied push / pull (and the harmonic push) acts at the centre of the body
+        Vec2 ext = world.externalForce(fe.body, world.time());
+        if (ext.x != 0 || ext.y != 0) loads.push_back({0.0, dot(ext, ey), 0.0});
+    }
+    const std::vector<Load> pointLoads = loads;                           // the concentrated forces, kept for the load diagram
+    {   // a distributed load on this beam: cut into small pieces, each a point load (this also keeps its resultant and moment exact)
+        const Body& bd = m.bodies[fe.body];
+        if (bd.dloadType != DL_None) {
+            const double tf = dot(world.distributedDir(fe.body), ey);          // the part of the load that bends the beam
+            double a, z;
+            distributedLoadSpan(bd, &a, &z);
+            const int ns = 240;
+            for (int k = 0; k < ns; ++k) {
+                double xm = a + (k + 0.5) * (z - a) / ns, q = world.distributedAt(fe.body, xm, world.time());
+                if (q != 0) loads.push_back({xm - L / 2, tf * q * (z - a) / ns, 0.0});
+            }
+        }
+    }
+    // Solves the beam for a set of point loads and a uniform load qg (plus the balancing inertia loads) and writes the deflection at the nodes.
+    auto solve = [&](const std::vector<Load>& loads, double qg, std::vector<double>& wout, std::vector<double>* Mout = nullptr, std::vector<double>* Vout = nullptr, bool withThermal = true) {
+    const double kT = withThermal ? fe.kappaT : 0.0;                      // the dead-load-only solve must not contain the temperature effect
     double Fn = qg * L, Mn = 0;
     for (const Load& ld : loads) { Fn += ld.P; Mn += ld.P * ld.x + ld.M; }
     const double q0 = qg - Fn / L, q1 = -12.0 * Mn / (L * L * L);         // d'Alembert: q(x) = q0 + q1 x makes the free beam balance
@@ -120,6 +148,9 @@ void beamDeflection(const World& world, const BeamFE& fe, Deflection& out) {
         f[2 * e + 1] += ld.P * l * (xi - 2 * x2 + x3) + ld.M * (1 - 4 * xi + 3 * x2);
         f[2 * e + 2] += ld.P * (3 * x2 - 2 * x3) + ld.M * (6 * xi - 6 * x2) / l;
         f[2 * e + 3] += ld.P * l * (-x2 + x3) + ld.M * (-2 * xi + 3 * x2);
+    }
+    if (kT != 0.0) {                                                      // thermal bowing: an imposed free curvature kappa gives the equivalent nodal load EI kappa [0, -1, 0, 1] per element
+        for (int e = 0; e < N; ++e) { f[2 * e + 1] -= fe.EI * kT; f[2 * e + 3] += fe.EI * kT; }
     }
     {   // remove the rounding left by the discretisation so the nodal loads balance exactly
         double R = 0, Mr = 0, Sxx = 0;
@@ -141,6 +172,19 @@ void beamDeflection(const World& world, const BeamFE& fe, Deflection& out) {
         u[i + 2] = s / fe.chol[(size_t)i * n + i];
     }
 
+    if (Mout || Vout) {                                                   // internal forces: M = -EI (w_xx - kappaT) (sagging +), V = dM/dx = -EI times the third derivative of w
+        std::vector<double> Ms(N), Me(N), Ve(N);
+        for (int e = 0; e < N; ++e) {
+            const double w1 = u[2 * e], t1 = u[2 * e + 1], w2 = u[2 * e + 2], t2 = u[2 * e + 3];
+            const double k0 = -6 * w1 / (l * l) - 4 * t1 / l + 6 * w2 / (l * l) - 2 * t2 / l;
+            const double k1 = 6 * w1 / (l * l) + 2 * t1 / l - 6 * w2 / (l * l) + 4 * t2 / l;
+            Ms[e] = -fe.EI * (k0 - kT);
+            Me[e] = -fe.EI * (k1 - kT);
+            Ve[e] = -fe.EI * (12 * w1 / (l * l * l) + 6 * t1 / (l * l) - 12 * w2 / (l * l * l) + 6 * t2 / (l * l));
+        }
+        if (Mout) { Mout->assign(N + 1, 0.0); for (int i = 0; i <= N; ++i) (*Mout)[i] = i == 0 ? Ms[0] : (i == N ? Me[N - 1] : 0.5 * (Me[i - 1] + Ms[i])); }
+        if (Vout) { Vout->assign(N + 1, 0.0); for (int i = 0; i <= N; ++i) (*Vout)[i] = i == 0 ? Ve[0] : (i == N ? Ve[N - 1] : 0.5 * (Ve[i - 1] + Ve[i])); }
+    }
     auto eval = [&](double xq, double* slope) {                           // Hermite interpolation of w and w'
         int e = std::clamp((int)std::floor((xq + L / 2) / l), 0, N - 1);
         double xi = (xq - fe.x[e]) / l, x2 = xi * xi, x3 = x2 * xi;
@@ -186,10 +230,68 @@ void beamDeflection(const World& world, const BeamFE& fe, Deflection& out) {
     } else {
         globalFit(&a, &b);                                                // nothing holds it: show the shape about its own mean line
     }
+    for (int i = 0; i <= N; ++i) wout[i] = u[2 * i] - (a + b * fe.x[i]);
+    };
+
+    // The beam's own weight is the DEAD LOAD, a uniform load of (mass per metre x g). It is part of the real loading, so the solve always contains it.
+    // When the dead load is switched off its response is taken out again: the beam is solved a second time under its own weight alone, held by the
+    // support reactions that statics gives for it (force and moment balance), and that shape is subtracted. What remains is the bending the other loads add.
+    const double qgTrue = fe.mu * m.env.gravity * ey.y;
+    std::vector<double> wTot(N + 1, 0.0), MTot, VTot;
+    solve(loads, qgTrue, wTot, &MTot, &VTot);
+    if (!m.env.deadLoad && qgTrue != 0.0) {
+        const double Fd = qgTrue * L;                                      // weight, transverse part
+        struct Unk { double x; bool moment; };
+        std::vector<Unk> unk;
+        for (const Support& sp : sups) { unk.push_back({sp.x, false}); if (sp.fixed) unk.push_back({sp.x, true}); }
+        std::vector<Load> dead;
+        if (!unk.empty()) {                                                // minimum-norm reactions R_k with  sum R = -Fd  and  sum R x + sum M = 0
+            double aa = 0, ab = 0, bb = 0;                                 // A A^T  (2 x 2), rows: [1 per force, 0 per moment] and [x per force, 1 per moment]
+            for (const Unk& u2 : unk) { double r0 = u2.moment ? 0.0 : 1.0, r1 = u2.moment ? 1.0 : u2.x; aa += r0 * r0; ab += r0 * r1; bb += r1 * r1; }
+            const double eps = 1e-9 * (aa + bb);
+            aa += eps; bb += eps;
+            const double det = aa * bb - ab * ab, rhs0 = -Fd, rhs1 = 0.0;
+            const double lam0 = (rhs0 * bb - ab * rhs1) / det, lam1 = (aa * rhs1 - ab * rhs0) / det;
+            for (const Unk& u2 : unk) {
+                double r0 = u2.moment ? 0.0 : 1.0, r1 = u2.moment ? 1.0 : u2.x, val = r0 * lam0 + r1 * lam1;
+                if (u2.moment) dead.push_back({u2.x, 0.0, val});
+                else dead.push_back({u2.x, val, 0.0});
+            }
+        }
+        std::vector<double> wDead(N + 1, 0.0), MDead, VDead;
+        solve(dead, qgTrue, wDead, &MDead, &VDead, false);
+        for (int i = 0; i <= N; ++i) { wTot[i] -= wDead[i]; MTot[i] -= MDead[i]; VTot[i] -= VDead[i]; }
+    }
     for (int i = 0; i <= N; ++i) {
-        double w = u[2 * i] - (a + b * fe.x[i]);
-        out.w[i] = w;
-        if (std::fabs(w) > out.maxAbs) { out.maxAbs = std::fabs(w); out.maxSigned = w; out.atX = fe.x[i]; }
+        out.w[i] = wTot[i];
+        if (std::fabs(wTot[i]) > out.maxAbs) { out.maxAbs = std::fabs(wTot[i]); out.maxSigned = wTot[i]; out.atX = fe.x[i]; }
+    }
+    out.M = MTot;
+    out.V = VTot;
+    out.q.assign(N + 1, 0.0);                                             // the applied distributed load (and the dead load if it is on), for the load diagram
+    {
+        const Body& bd = m.bodies[fe.body];
+        if (bd.dloadType != DL_None) {
+            const double tf = dot(world.distributedDir(fe.body), ey);
+            for (int i = 0; i <= N; ++i) out.q[i] = tf * world.distributedAt(fe.body, fe.x[i] + L / 2, world.time());
+        }
+        if (m.env.deadLoad) for (int i = 0; i <= N; ++i) out.q[i] += qgTrue;
+    }
+    out.pts.clear();
+    {
+        std::vector<Load> pl = pointLoads;
+        std::sort(pl.begin(), pl.end(), [](const Load& a, const Load& b) { return std::fabs(a.P) > std::fabs(b.P); });
+        for (const Load& ld : pl) { if (std::fabs(ld.P) < 1e-9 || out.pts.size() >= 8) break; out.pts.push_back({ld.x, ld.P}); }
+    }
+    {   // thermal expansion: where the beam is held, and whether it can grow at all
+        bool have = false;
+        double lo = 0, hi = 0;
+        for (const Support& sp : sups) if (sp.axial) { if (!have) { lo = hi = sp.x; have = true; } else { lo = std::min(lo, sp.x); hi = std::max(hi, sp.x); } }
+        out.anchorX = have ? lo : 0.0;
+        out.restrained = have && (hi - lo) > 0.05 * L;
+        out.epsT = fe.epsT;
+        out.axialN = out.restrained ? -fe.E * fe.A * fe.epsT : 0.0;       // heating a beam that cannot grow puts it into compression
+        out.axialSigma = out.restrained ? -fe.E * fe.epsT : 0.0;
     }
 }
 
@@ -199,10 +301,15 @@ static double stressFrom(const BeamFE& fe, const T* w) {
     const double l = fe.L / N;
     double kmax = 0;
     for (int i = 1; i < N; ++i) kmax = std::max(kmax, std::fabs((double)w[i - 1] - 2.0 * w[i] + w[i + 1]) / (l * l));
-    return fe.E * kmax * fe.h / 2.0;
+    return fe.E * kmax * fe.cMax;
 }
 double bendingStress(const BeamFE& fe, const std::vector<double>& w) { return w.size() == fe.x.size() ? stressFrom(fe, w.data()) : 0.0; }
 double bendingStress(const BeamFE& fe, const float* w) { return stressFrom(fe, w); }
+double bendingStressFromM(const BeamFE& fe, const float* M) {
+    double mx = 0;
+    for (size_t i = 0; i < fe.x.size(); ++i) mx = std::max(mx, std::fabs((double)M[i]));
+    return fe.I > 0 ? mx * fe.cMax / fe.I : 0.0;
+}
 
 // ====================================================================== squash of a compact body
 double contactForce(const World& world, int body) {

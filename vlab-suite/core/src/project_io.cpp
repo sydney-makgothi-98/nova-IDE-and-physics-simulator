@@ -21,7 +21,7 @@ std::string modelToText(const Model& m) {
     const Environment& e = m.env;
     o << "env\t" << e.gravity << "\t" << e.realistic << "\t" << e.collisions << "\t" << e.friction << "\t" << e.inelastic << "\t"
       << e.rolling << "\t" << e.damping << "\t" << e.airDrag << "\t" << e.drag1 << "\t" << e.drag2 << "\t" << (int)e.muCombine << "\t"
-      << (int)e.eCombine << "\t" << e.restThreshold << "\t" << e.solverIterations << "\t" << e.dt << "\n";
+      << (int)e.eCombine << "\t" << e.restThreshold << "\t" << e.solverIterations << "\t" << e.dt << "\t" << e.deadLoad << "\t" << e.deltaT << "\n";
     o << "run\t" << m.run.duration << "\t" << m.run.sampleHz << "\n";
     for (const Body& b : m.bodies) {
         o << "body\t" << clean(b.name) << "\t" << (int)b.kind << "\t" << (int)b.shape.preset << "\t" << b.shape.radius << "\t"
@@ -29,7 +29,7 @@ std::string modelToText(const Model& m) {
           << b.mat.muS << "\t" << b.mat.muK << "\t" << b.mat.restitution << "\t" << b.mat.rollRes << "\t" << b.massFromDensity << "\t"
           << b.mass << "\t" << b.pos.x << "\t" << b.pos.y << "\t" << b.angle << "\t" << b.vel.x << "\t" << b.vel.y << "\t" << b.omega
           << "\t" << b.lockX << "\t" << b.lockY << "\t" << b.lockRot << "\t" << b.driveF << "\t" << b.driveAngleDeg << "\t" << b.driveW
-          << "\t" << b.color << "\t" << b.collide << "\t" << b.mat.youngs << "\t" << b.driveT << "\n";
+          << "\t" << b.color << "\t" << b.collide << "\t" << b.mat.youngs << "\t" << b.driveT << "\t" << b.loadN << "\t" << b.loadAngleDeg << "\t" << b.loadPull << "\t" << b.dloadType << "\t" << b.dloadN << "\t" << b.dloadAngleDeg << "\t" << b.dloadX0 << "\t" << b.dloadX1 << "\t" << clean(b.dloadExpr) << "\t" << b.secType << "\t" << b.secB << "\t" << b.secH << "\t" << b.secTf << "\t" << b.secTw << "\t" << b.tempDelta << "\t" << b.tempGrad << "\t" << b.mat.alphaT << "\n";
     }
     for (const Link& l : m.links) {
         o << "link\t" << (int)l.kind << "\t" << l.a << "\t" << l.b << "\t" << l.la.x << "\t" << l.la.y << "\t" << l.lb.x << "\t" << l.lb.y
@@ -73,6 +73,8 @@ bool modelFromText(const std::string& text, Model& out, std::string* error) {
             e.inelastic = num(f, 5) != 0; e.rolling = num(f, 6) != 0; e.damping = num(f, 7) != 0; e.airDrag = num(f, 8) != 0;
             e.drag1 = num(f, 9); e.drag2 = num(f, 10); e.muCombine = (Combine)(int)num(f, 11); e.eCombine = (Combine)(int)num(f, 12, 3);
             e.restThreshold = num(f, 13, 0.25); e.solverIterations = (int)num(f, 14, 14); e.dt = num(f, 15, 0.00025);
+            e.deadLoad = num(f, 16, 0) != 0;
+            e.deltaT = num(f, 17, 0);
             if (e.dt < 1e-5) e.dt = 1e-5;
             if (e.dt > 0.005) e.dt = 0.005;
         } else if (k == "run") {
@@ -95,6 +97,24 @@ bool modelFromText(const std::string& text, Model& out, std::string* error) {
             if (const Material* lm = findMaterial(b.mat.name)) b.mat.youngs = lm->youngs;     // older files: take the stiffness from the named material
             if (f.size() > 30 && num(f, 30, 0) > 0) b.mat.youngs = num(f, 30, b.mat.youngs);
             if (f.size() > 31) b.driveT = num(f, 31, 0);
+            if (f.size() > 32) b.loadN = num(f, 32, 0);
+            if (f.size() > 33) b.loadAngleDeg = num(f, 33, 0);
+            if (f.size() > 34) b.loadPull = num(f, 34, 0) != 0;
+            if (f.size() > 35) b.dloadType = (int)num(f, 35, 0);
+            if (f.size() > 36) b.dloadN = num(f, 36, 0);
+            if (f.size() > 37) b.dloadAngleDeg = num(f, 37, 90);
+            if (f.size() > 38) b.dloadX0 = num(f, 38, 0);
+            if (f.size() > 39) b.dloadX1 = num(f, 39, -1);
+            if (f.size() > 40 && !f[40].empty()) b.dloadExpr = f[40];
+            if (const Material* lm2 = findMaterial(b.mat.name)) b.mat.alphaT = lm2->alphaT;          // older files: the expansion coefficient of the named material
+            if (f.size() > 41) b.secType = (int)num(f, 41, 0);
+            if (f.size() > 42) b.secB = num(f, 42, 0.10);
+            if (f.size() > 43) b.secH = num(f, 43, 0.20);
+            if (f.size() > 44) b.secTf = num(f, 44, 0.012);
+            if (f.size() > 45) b.secTw = num(f, 45, 0.008);
+            if (f.size() > 46) b.tempDelta = num(f, 46, 0);
+            if (f.size() > 47) b.tempGrad = num(f, 47, 0);
+            if (f.size() > 48 && num(f, 48, 0) != 0) b.mat.alphaT = num(f, 48, b.mat.alphaT);
             m.bodies.push_back(b);
         } else if (k == "link" && f.size() >= 14) {
             Link l;
@@ -576,21 +596,21 @@ Example carSuspension() {
 }
 Example railgun() {
     Example e{"Railgun firing and recoiling",
-              "A 2 kg slug is driven down a rail housing by a single 80 ms pulse of force (Properties > Pulse length). Newton's third law pushes the 60 kg housing the other way, "
-              "and its recoil spring and damper bring it back to rest. The slug then hits a clay target on springs. Plot the three x positions, compare the momenta, and read the Energy ledger "
-              "for the impact loss.", {}};
+              "A 2 kg slug rides on the rail housing and is driven along it by a single 80 ms pulse of force (Properties > Pulse length). Newton's third law pushes the 60 kg housing the other way, "
+              "and its recoil spring and damper bring it back to rest. The slug leaves the muzzle, drops under gravity, strikes a clay target on springs and then slides down to the ground. "
+              "Plot the x positions, compare the momenta, and read the Energy ledger for the impact loss.", {}};
     Model& m = e.model;
     m.name = "Railgun";
     m.env.setRealistic();
     m.env.eCombine = Combine::Min;
     add(m, makeFloor(18, 0, mat("Concrete"), {3.0, 0.9}), "Ground");
     Body hs = makeBox(3.0, 0.3, mat("Steel"), {0, 0});
-    hs.massFromDensity = false; hs.mass = 60; hs.lockY = true; hs.lockRot = true; hs.collide = false;
+    hs.massFromDensity = false; hs.mass = 60; hs.lockY = true; hs.lockRot = true;          // the housing is the rail: the slug rides on its top
     hs.driveF = 1000; hs.driveAngleDeg = 180; hs.driveT = 0.08;               // the reaction: equal and opposite, same pulse
     hs.color = 0xFF6A7488;
     int ih = add(m, hs, "Housing");
-    Body sl = makeBox(0.35, 0.12, mat("Steel"), {-1.1, 0});
-    sl.massFromDensity = false; sl.mass = 2; sl.lockY = true; sl.lockRot = true;
+    Body sl = makeBox(0.35, 0.12, mat("Teflon (PTFE)"), {-1.1, -0.15 - 0.06});         // free to fall once it leaves the rail
+    sl.massFromDensity = false; sl.mass = 2; sl.lockRot = true;
     sl.driveF = 1000; sl.driveAngleDeg = 0; sl.driveT = 0.08;
     sl.color = 0xFFE8B04A;
     add(m, sl, "Slug");

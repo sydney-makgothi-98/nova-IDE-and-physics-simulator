@@ -1,4 +1,5 @@
 #include "vlab/model.hpp"
+#include "vlab/section.hpp"
 #include <algorithm>
 
 namespace vlab {
@@ -6,17 +7,17 @@ namespace vlab {
 // ------------------------------------------------------------------ materials
 const std::vector<Material>& materialLibrary() {
     static const std::vector<Material> lib = {
-        // name           density  muS   muK   e     rollRes  E (Pa)
-        {"Ideal (frictionless, elastic)", 1000, 0.00, 0.00, 1.00, 0.000, 200e9},
-        {"Steel",         7850, 0.74, 0.57, 0.65, 0.002, 200e9},
-        {"Aluminium",     2700, 0.61, 0.47, 0.60, 0.003, 69e9},
-        {"Rubber",        1100, 1.00, 0.80, 0.80, 0.020, 0.05e9},
-        {"Wood",           700, 0.50, 0.35, 0.50, 0.010, 11e9},
-        {"Concrete",      2400, 0.70, 0.60, 0.20, 0.015, 30e9},
-        {"Glass",         2500, 0.90, 0.40, 0.70, 0.003, 70e9},
-        {"Ice",            917, 0.10, 0.03, 0.30, 0.001, 9e9},
-        {"Teflon (PTFE)", 2200, 0.04, 0.04, 0.50, 0.002, 0.5e9},
-        {"Clay / putty",  1800, 0.60, 0.50, 0.05, 0.030, 0.05e9},
+        // name           density  muS   muK   e     rollRes  E (Pa)  alpha (1/K)
+        {"Ideal (frictionless, elastic)", 1000, 0.00, 0.00, 1.00, 0.000, 12e-6, 200e9},
+        {"Steel",         7850, 0.74, 0.57, 0.65, 0.002, 12e-6, 200e9},
+        {"Aluminium",     2700, 0.61, 0.47, 0.60, 0.003, 23e-6, 69e9},
+        {"Rubber",        1100, 1.00, 0.80, 0.80, 0.020, 150e-6, 0.05e9},
+        {"Wood",           700, 0.50, 0.35, 0.50, 0.010, 5e-6, 11e9},
+        {"Concrete",      2400, 0.70, 0.60, 0.20, 0.015, 10e-6, 30e9},
+        {"Glass",         2500, 0.90, 0.40, 0.70, 0.003, 9e-6, 70e9},
+        {"Ice",            917, 0.10, 0.03, 0.30, 0.001, 51e-6, 9e9},
+        {"Teflon (PTFE)", 2200, 0.04, 0.04, 0.50, 0.002, 120e-6, 0.5e9},
+        {"Clay / putty",  1800, 0.60, 0.50, 0.05, 0.030, 20e-6, 0.05e9},
     };
     return lib;
 }
@@ -120,6 +121,7 @@ void Environment::setRealistic() {
 // ------------------------------------------------------------------ model
 void Model::updateMass() {
     for (Body& b : bodies) {
+        if (b.secType != 0 && b.shape.preset == ShapePreset::Box) b.shape.h = std::max(0.01, b.secH);    // the drawn thickness follows the chosen section
         b.shape.rebuild();
         if (b.kind != BodyKind::Dynamic) {
             b.massKg = 0;
@@ -128,7 +130,9 @@ void Model::updateMass() {
             b.invI = 0;
             continue;
         }
-        double m = b.massFromDensity ? b.mat.density * b.shape.area : b.mass;
+        double area = b.shape.area;
+        if (b.secType != 0 && b.shape.preset == ShapePreset::Box) area = makeSection(b).A * b.shape.w;   // a real section: mass = density x section area x length
+        double m = b.massFromDensity ? b.mat.density * area : b.mass;
         m = std::max(1e-6, m);
         b.massKg = m;
         b.invMass = 1.0 / m;

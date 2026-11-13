@@ -7,6 +7,27 @@
 
 namespace vlab {
 
+static int CALLBACK folderCallback(HWND h, UINT msg, LPARAM, LPARAM data) {
+    if (msg == BFFM_INITIALIZED && data) SendMessageA(h, BFFM_SETSELECTIONA, TRUE, data);
+    return 0;
+}
+
+std::string pickFolderDialog(const char* title, const std::string& initial) {
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    char path[MAX_PATH] = "";
+    BROWSEINFOA bi{};
+    bi.hwndOwner = GetActiveWindow();
+    bi.lpszTitle = title;
+    bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+    bi.lpfn = folderCallback;
+    bi.lParam = (LPARAM)initial.c_str();
+    LPITEMIDLIST pidl = SHBrowseForFolderA(&bi);
+    if (!pidl) return std::string();
+    bool ok = SHGetPathFromIDListA(pidl, path) != FALSE;
+    CoTaskMemFree(pidl);
+    return ok ? std::string(path) : std::string();
+}
+
 std::string openFileDialog(const char* filter, const char* initialDir) {
     char file[MAX_PATH] = "";
     OPENFILENAMEA ofn{};

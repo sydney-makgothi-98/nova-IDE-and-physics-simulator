@@ -9,6 +9,7 @@
 #include "vlab/deform.hpp"
 #include "vlab/project_io.hpp"
 #include "vlab/session.hpp"
+#include "video.hpp"
 
 class VideoEncoder;      // encoder.hpp (Media Foundation H.264 writer)
 
@@ -24,6 +25,16 @@ struct Platform {
     virtual void releaseFrame() = 0;
     virtual void setTitle(const std::string& title) = 0;
     virtual void requestQuit() = 0;
+    // textures for the dashboard video: createTexture returns an opaque handle; textureId gives the value to hand to ImGui::Image
+    virtual void* createTexture(int w, int h) = 0;
+    virtual void updateTexture(void* tex, const void* bgra, int pitchBytes) = 0;
+    virtual void destroyTexture(void* tex) = 0;
+    virtual unsigned long long textureId(void* tex) = 0;
+};
+
+// Colours the canvas draws with; they change with the light / dark theme.
+struct Pal {
+    ImU32 bg, gridMinor, gridMajor, gridAxis, gridText, text, dim, mid, ink, link, amber, panel;
 };
 
 struct App {
@@ -43,6 +54,41 @@ struct App {
     double scale = 70.0;                 // pixels per metre
     bool snap = true;
     double snapStep = 0.1;
+    // ---------------------------------------------------------------- dashboard
+    struct Project { std::string path, name, when; long long mtime = 0, bytes = 0; Model model; };
+    std::vector<Project> projects;       // the .vlab files in the designs folder, newest first
+    double projectsScanned = -100;
+    std::unique_ptr<VideoPlayer> cover;  // the cover video (dashboard_cover.mp4)
+    void* coverTex = nullptr;
+    int coverTexW = 0, coverTexH = 0;
+    bool coverTried = false;
+    bool pageDashboard = true;           // the Dashboard page is showing (it replaces the canvas and telemetry, the sidebar stays)
+    bool dashJustShown = true;
+    bool focusSim = false;               // bring the Simulation tab forward (after opening or running something)
+    bool focusDashboard = true;          // bring the Dashboard tab forward on the next frame
+    const char* focusWindow = nullptr;   // bring this window (a docked tab) forward on the next frame
+    int lastSelBody = -1, lastSelLink = -1;
+    std::string coverTarget() const { return docsDir + "\\dashboard_cover.mp4"; }
+    void drawDashboard();
+    void scanProjects();
+    void loadCover();
+    bool darkTheme = true;               // light / dark interface theme (saved in the documents folder)
+    Pal palette() const;
+    void applyTheme();                   // push the theme into ImGui and ImPlot
+    void setTheme(bool dark);
+    bool showGridNumbers = true;
+    ImVec2 toolbarMin{0, 0}, toolbarMax{0, 0};   // the Run / Pause / Stop strip on the canvas (clicks there are not canvas clicks)
+    // data extraction settings (Data panel)
+    std::string exportBase;              // file name, empty: the design name
+    bool exportStamp = true;             // add the date and time to the file name
+    bool exportAll = true;               // every channel, or only the ticked ones
+    std::vector<char> exportSel;         // one flag per telemetry channel (when not all)
+    bool autoExportCsv = false, autoExportXlsx = false, autoRecord = false;
+    void saveDataSettings();
+    void loadDataSettings();
+    std::string exportBaseName() const;
+    std::string exportFileName(const char* ext) const;
+    const Telemetry* exportSource(Telemetry& tmp, bool excel) const;
     bool showGrid = true, showContacts = true, showLabels = true, showVectors = false;
     int selBody = -1, selLink = -1;
     int linkFirst = -1;                  // first body clicked while drawing a link
@@ -106,6 +152,13 @@ struct App {
     bool plotPicked = false;             // the Plots tab has chosen its default channels for this run
     bool specPicked = false;             // the Spectrum tab has chosen a signal that moves
     int deformBody = 0;                  // Deformation tab: which body
+    float propScrollY = -1;              // (test hook) scroll the Properties panel to this position on the next frame
+    int diagSubForce = -1;               // (test hook) select a sub-tab of Beam diagrams on the next frame
+    int sideOpen = 1;                    // which SETTINGS section is open in the sidebar: 0 Physical, 1 Object, 2 Sim setup, 3 Grid, 4 Data (-1: none)
+    bool toolsOpen = true;               // the DESIGN TOOLS group is expanded
+    int diagBody = 0;                    // Beam diagrams tab: which beam
+    bool diagLive = true;                // ... follow the latest sample
+    double diagX = -1;                   // ... where along the beam the cross-section is examined (m from the left end, < 0: mid-span)
     int deformRow = -1;                  // Deformation tab: telemetry row shown in the shape plot (-1 = the row of peak deflection)
 
     // ---------------------------------------------------------------- deformation view (canvas)
@@ -195,10 +248,12 @@ struct App {
     // ---------------------------------------------------------------- panels
     void drawMenuBar();
     void drawCanvas();
-    void drawLibrary();
+    void drawSidebar();
     void drawProperties();
     void drawEnvironment();
     void drawRunPanel();
+    void drawGrid();
+    void drawData();
     void drawTelemetry();
     void drawWelcome();
     void drawAbout();
@@ -225,6 +280,7 @@ struct App {
 };
 
 // platform helpers (dialogs.cpp)
+std::string pickFolderDialog(const char* title, const std::string& initial);
 std::string openFileDialog(const char* filter, const char* initialDir);
 std::string saveFileDialog(const char* filter, const char* defExt, const std::string& initialDir, const std::string& defaultName);
 std::string documentsFolder();
@@ -232,5 +288,8 @@ bool ensureDirectory(const std::string& path);
 void openInShell(const std::string& path, bool selectInExplorer);
 ImU32 argbToImU32(unsigned argb);
 unsigned imU32ToArgb(ImU32 c);
+
+// the cross-section of a beam drawn into the current window, optionally coloured by normal stress (section_ui.cpp)
+void drawSectionSketch(const Section& s, ImVec2 origin, ImVec2 size, const SectionStress* stress, const Pal& pal);
 
 }  // namespace vlab

@@ -15,6 +15,7 @@ struct Material {
     double muK = 0.4;          // kinetic (sliding) friction coefficient
     double restitution = 0.3;  // bounciness: 0 = dead, 1 = perfectly elastic
     double rollRes = 0.0;      // rolling resistance coefficient (dimensionless, about 0.001 to 0.05)
+    double alphaT = 12e-6;     // coefficient of linear thermal expansion (per kelvin): steel 12e-6, aluminium 23e-6 ...
     double youngs = 200e9;     // Young's modulus E in pascals (stiffness): sets how much a body bends or squashes (deform.hpp)
 };
 
@@ -59,6 +60,18 @@ struct Body {
     double driveF = 0;              // harmonic push: amplitude (N) ...
     double driveAngleDeg = 0;       // ... direction (0 = right, 90 = down) ...
     double driveW = 0;              // ... and angular frequency (rad/s)
+    int secType = 0;                // cross-section of a beam (section.hpp): 0 slab (1 m deep rectangle), 1 rectangle, 2 circle, 3 hollow rectangle, 4 tube, 5 I-beam, 6 T-beam, 7 channel
+    double secB = 0.10, secH = 0.20, secTf = 0.012, secTw = 0.008;   // width (or flange width), height (or diameter), flange / wall thickness, web thickness (m)
+    double tempDelta = 0;           // temperature change of this body, deg C (thermal expansion)
+    double tempGrad = 0;            // temperature of its lower face minus its upper face, deg C (makes a beam bow)
+    int dloadType = 0;              // distributed load along a box: 0 none, 1 uniform, 2 triangular rising, 3 falling, 4 peak in the middle, 5 equation (expr.hpp)
+    double dloadN = 0;              // its peak intensity in newtons per metre (kg-force per metre = N/m / 9.80665)
+    double dloadAngleDeg = 90;      // direction it acts in (0 = right, 90 = down: like gravity)
+    double dloadX0 = 0, dloadX1 = -1;   // where along the body it acts: from x0 to x1 metres from the left end (x1 < 0: to the far end)
+    std::string dloadExpr = "500*sin(pi*x/L)";   // the formula q(x) in N/m when the type is "equation"
+    double loadN = 0;               // a constant LOAD on the centre of mass: magnitude in newtons (kg-force = N / 9.80665) ...
+    double loadAngleDeg = 0;        // ... direction (0 = right, 90 = down) ...
+    bool loadPull = false;          // ... and push (false) or pull (true: the same line, the opposite way)
     double driveT = 0;              // > 0: instead a single half-sine PULSE of this many seconds starting at t = 0 (a gun, a hammer blow)
     unsigned color = 0xFF3574F0;    // ARGB for drawing
 
@@ -105,6 +118,8 @@ struct Environment {
     bool inelastic = true;           // off: every impact is perfectly elastic (e = 1)
     bool rolling = true;             // rolling resistance of circles
     bool damping = true;             // off: dampers are ignored
+    double deltaT = 0;               // temperature change applied to every body, deg C (added to each body's own)
+    bool deadLoad = false;           // include each beam's own weight (mass per metre x g) as a distributed load in its bending (deform.hpp)
     bool airDrag = false;            // F = -(c1 + c2 |v|) v on every moving body
     double drag1 = 0.0;              // N s/m
     double drag2 = 0.0;              // N s^2/m^2

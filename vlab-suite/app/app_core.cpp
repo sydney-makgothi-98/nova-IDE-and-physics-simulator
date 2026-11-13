@@ -39,14 +39,28 @@ void App::init(Platform* p) {
     ensureDirectory(designsDir);
     ensureDirectory(exportsDir);
     ensureDirectory(recordingsDir);
+    loadDataSettings();                                              // folders and file names chosen in the Data panel last time
+    ensureDirectory(exportsDir);
+    ensureDirectory(recordingsDir);
     Model m;
     std::string seen = docsDir + "\\welcome_seen.txt";
     bool first = !std::ifstream(seen).good();
     std::string err;
     if (!first && loadModelFile(docsDir + "\\last_session.vlab", m, &err)) ses.setDesign(m);
     else ses.setDesign(exampleGallery()[0].model);
-    showWelcome = first;
-    if (first) std::ofstream(seen) << "shown\n";
+    showWelcome = false;                     // the Dashboard is the front page now
+    if (first) std::ofstream(seen) << "shown";
+    {   // theme, and a layout reset when the panel arrangement changed (the sidebar now holds Run / Properties / Environment)
+        std::ifstream th(docsDir + "\\theme.txt");
+        std::string t;
+        if (th >> t) darkTheme = t != "light";
+        applyTheme();
+        std::string lv = docsDir + "\\layout_v6.txt";                  // bump this name whenever the default panel arrangement changes
+        if (!std::ifstream(lv).good()) {
+            resetLayout = true;
+            if (!std::strstr(GetCommandLineA(), "--autotest")) std::ofstream(lv) << "6";     // test runs must not mark a real user's layout as done
+        }
+    }
     frameSnapshot = design();
     frfReq.f0 = 0.1;
     frfReq.f1 = 3.0;
@@ -55,6 +69,8 @@ void App::init(Platform* p) {
 
 void App::shutdown() {
     stopRecording();
+    cover.reset();
+    if (coverTex && platform) { platform->destroyTexture(coverTex); coverTex = nullptr; }
     frfCancel = true;
     if (frfHandle) { WaitForSingleObject((HANDLE)frfHandle, 5000); CloseHandle((HANDLE)frfHandle); frfHandle = nullptr; }
     saveModelFile(docsDir + "\\last_session.vlab", design());
@@ -133,6 +149,7 @@ void App::newDesign() {
     haveSpectrum = haveModal = haveFrf = false;
     state = RunState::Design;
     statusLine = "Empty canvas: pick a shape in the Library (left), then click the canvas.";
+    focusSim = true;
 }
 
 void App::openFile(const std::string& path) {
@@ -150,6 +167,7 @@ void App::openFile(const std::string& path) {
     dirty = false;
     haveSpectrum = haveModal = haveFrf = false;
     say("Opened " + path);
+    focusSim = true;
 }
 
 void App::loadDesignDialog() {
@@ -185,6 +203,7 @@ void App::loadExample(int index) {
     needFit = true;
     statusLine = exampleGallery()[index].summary;
     state = RunState::Design;
+    focusSim = true;
 }
 
 // ====================================================================== running
@@ -215,13 +234,17 @@ void App::startRun(bool realTime) {
     specChannel = 0;
     phaseBody = 0;
     deformPeak = 0;
+    diagX = -1;
+    diagLive = true;
     plotPicked = false;
     specPicked = false;
     deformRow = -1;
     deformBody = 0;
     state = realTime ? RunState::Running : RunState::Computing;
+    focusSim = true;
     statusLine = realTime ? "Running in real time. Drag a body with the mouse to disturb it." : "Computing the whole run...";
     plotAutoFit = true;
+    if (realTime && autoRecord && !recording) { ensureDirectory(recordingsDir); startRecording(); }
 }
 
 void App::pause() {
@@ -230,6 +253,7 @@ void App::pause() {
 }
 
 void App::stopRun() {
+    if (autoRecord && recording) stopRecording();
     if (ses.hasWorld()) ses.world()->clearMouse();
     ses.stop();
     dragBody = -1;
@@ -259,6 +283,9 @@ void App::finishRunIfDone() {
         std::snprintf(b, sizeof b, "Run complete: %.1f s simulated, %zu data rows. Export to Excel from the Run panel.", ses.simTime(), ses.telemetry().rows());
         statusLine = b;
         say(b);
+        if (autoExportCsv) { ensureDirectory(exportsDir); exportCsvTo(exportFileName(".csv")); }          // the Data panel can save the files by itself
+        if (autoExportXlsx) { ensureDirectory(exportsDir); exportExcelTo(exportFileName(".xlsx")); }
+        if (autoRecord && recording) stopRecording();
     }
 }
 
@@ -304,13 +331,71 @@ void App::advanceRun(float dt) {
 }
 
 // ====================================================================== exporting
+// ====================================================================== data extraction settings
+// What the Data panel remembers between sessions: where files go, the name, which formats to save by themselves.
+void App::saveDataSettings() {
+    std::ofstream f(docsDir + "\\data_settings.txt");
+    f << "exports=" << exportsDir << "\n"
+      << "recordings=" << recordingsDir << "\n"
+      << "base=" << exportBase << "\n"
+      << "stamp=" << (exportStamp ? 1 : 0) << "\n"
+      << "all=" << (exportAll ? 1 : 0) << "\n"
+      << "autocsv=" << (autoExportCsv ? 1 : 0) << "\n"
+      << "autoxlsx=" << (autoExportXlsx ? 1 : 0) << "\n"
+      << "autorec=" << (autoRecord ? 1 : 0) << "\n";
+}
+
+void App::loadDataSettings() {
+    std::ifstream f(docsDir + "\\data_settings.txt");
+    std::string line;
+    while (std::getline(f, line)) {
+        size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        std::string k = line.substr(0, eq), v = line.substr(eq + 1);
+        if (!v.empty() && v.back() == '\r') v.pop_back();
+        if (k == "exports" && !v.empty()) exportsDir = v;
+        else if (k == "recordings" && !v.empty()) recordingsDir = v;
+        else if (k == "base") exportBase = v;
+        else if (k == "stamp") exportStamp = v != "0";
+        else if (k == "all") exportAll = v != "0";
+        else if (k == "autocsv") autoExportCsv = v != "0";
+        else if (k == "autoxlsx") autoExportXlsx = v != "0";
+        else if (k == "autorec") autoRecord = v != "0";
+    }
+}
+
+std::string App::exportBaseName() const {
+    std::string base = safeName(exportBase.empty() ? runModel.name : exportBase);
+    if (exportStamp) base += "_" + stamp();
+    return base;
+}
+
+std::string App::exportFileName(const char* ext) const { return exportsDir + "\\" + exportBaseName() + ext; }
+
+// The telemetry as it will be exported: every channel, or only the ticked ones (for Excel the Energy channels always come along:
+// the summary sheet is built from them).
+const Telemetry* App::exportSource(Telemetry& tmp, bool excel) const {
+    const Telemetry& t = ses.telemetry();
+    if (exportAll || exportSel.size() != t.channels.size()) return &t;
+    tmp.channels.clear();
+    tmp.col.clear();
+    tmp.deform.clear();
+    tmp.t = t.t;
+    for (size_t c = 0; c < t.channels.size(); ++c)
+        if (exportSel[c] || (excel && t.channels[c].group == "Energy")) { tmp.channels.push_back(t.channels[c]); tmp.col.push_back(t.col[c]); }
+    return &tmp;
+}
+
 bool App::exportExcelTo(const std::string& p) {
     ExportExtras x;
     if (haveSpectrum) { x.spectrum = &spectrum; x.spectrumChannel = specName; }
     if (haveModal) x.modal = &modal;
     if (haveFrf) { x.frf = &frf; x.frfNote = frfNote; }
     std::string err;
-    if (!exportExcel(p, runModel, ses.telemetry(), runModel.run.duration, x, &err)) { say("Export failed: " + err, true); return false; }
+    Telemetry tmp;
+    const Telemetry* src = exportSource(tmp, true);
+    if (src->channels.empty()) { say("No channels are ticked: open the Data panel and tick what to extract.", true); return false; }
+    if (!exportExcel(p, runModel, *src, runModel.run.duration, x, &err)) { say("Export failed: " + err, true); return false; }
     lastExportPath = p;
     say("Excel workbook saved: " + p);
     return true;
@@ -318,7 +403,10 @@ bool App::exportExcelTo(const std::string& p) {
 
 bool App::exportCsvTo(const std::string& p) {
     std::string err;
-    if (!exportCsv(p, ses.telemetry(), &err)) { say("Export failed: " + err, true); return false; }
+    Telemetry tmp;
+    const Telemetry* src = exportSource(tmp, false);
+    if (src->channels.empty()) { say("No channels are ticked: open the Data panel and tick what to extract.", true); return false; }
+    if (!exportCsv(p, *src, &err)) { say("Export failed: " + err, true); return false; }
     lastExportPath = p;
     say("CSV saved: " + p);
     return true;
@@ -326,14 +414,14 @@ bool App::exportCsvTo(const std::string& p) {
 
 void App::exportExcelDialog() {
     if (!haveResults || ses.telemetry().rows() == 0) { say("Nothing to export yet. Run the model first.", true); return; }
-    std::string def = safeName(runModel.name) + "_" + stamp() + ".xlsx";
+    std::string def = exportBaseName() + ".xlsx";
     std::string p = saveFileDialog("Excel workbook (*.xlsx)\0*.xlsx\0\0", "xlsx", exportsDir, def);
     if (!p.empty()) exportExcelTo(p);
 }
 
 void App::exportCsvDialog() {
     if (!haveResults || ses.telemetry().rows() == 0) { say("Nothing to export yet. Run the model first.", true); return; }
-    std::string def = safeName(runModel.name) + "_" + stamp() + ".csv";
+    std::string def = exportBaseName() + ".csv";
     std::string p = saveFileDialog("CSV file (*.csv)\0*.csv\0\0", "csv", exportsDir, def);
     if (!p.empty()) exportCsvTo(p);
 }
@@ -549,15 +637,15 @@ void App::autotestStep() {
                      plotSel.assign(ses.telemetry().channels.size(), 0); plotPicked = true;
                      for (const char* n : {"Main mass dx", "Absorber dx"}) { int ch = ses.telemetry().find(n); if (ch >= 0) plotSel[ch] = 1; }
                      forceTab = 0; autotestPhase = 30; autotestWait = 4; } break;
-        case 30: shot("shot_tmd_plots.bmp"); forceTab = 4; autotestPhase = 31; autotestWait = 4; break;
-        case 31: shot("shot_spectrum.bmp"); forceTab = 6; autotestPhase = 32; autotestWait = 4; break;
+        case 30: shot("shot_tmd_plots.bmp"); forceTab = 5; autotestPhase = 31; autotestWait = 4; break;
+        case 31: shot("shot_spectrum.bmp"); forceTab = 7; autotestPhase = 32; autotestWait = 4; break;
         case 32: shot("shot_modal.bmp"); forceTab = 1; autotestPhase = 33; autotestWait = 4; break;
         case 33: shot("shot_energy.bmp"); stopRun(); frfReq.driveBody = 1; frfReq.responseBody = 1; frfReq.f0 = 0.3; frfReq.f1 = 1.6; frfReq.points = 30; frfReq.settleSeconds = 8; frfReq.driveAngleDeg = 0; frfReq.forceAmp = 5;
-                 startFrf(); forceTab = 7; autotestPhase = 34; autotestWait = 10; break;
+                 startFrf(); forceTab = 8; autotestPhase = 34; autotestWait = 10; break;
         case 34: if (!frfBusy && haveFrf) { autotestPhase = 35; autotestWait = 6; } break;
         case 35: shot("shot_frf.bmp"); autotestPhase = 36; break;
         case 36: stopRun(); loadExample(1); autotestPhase = 37; autotestWait = 6; break;
-        case 37: computeModal(); modeShown = 0; modeClock = 0.35; forceTab = 6; autotestPhase = 38; autotestWait = 6; break;
+        case 37: computeModal(); modeShown = 0; modeClock = 0.35; forceTab = 7; autotestPhase = 38; autotestWait = 6; break;
         case 38: shot("shot_design.bmp"); autotestPhase = 39; break;
         case 39: stopRun(); newDesign(); autotestPhase = 40; autotestWait = 4; break;                             // floors, beams, supports by clicking
         case 40: tool = Tool::Floor; floorLength = 8; nextAngle = 0; click(toScreen(Vec2(0, 2.5)), 0); autotestPhase = 41; break;
@@ -642,16 +730,65 @@ void App::autotestStep() {
         case 141: shot("ex_domino.bmp"); autotestPhase = 107; autotestWait = 3; break;
         case 150: showWelcome = false; loadExample(13); autotestPhase = 151; autotestWait = 4; break;                                // flicker check
         case 151: startRun(false); autotestPhase = 152; break;
-        case 152: if (state == RunState::Done) { forceTab = 7; autotestPhase = 153; autotestWait = 8; } break;
+        case 152: if (state == RunState::Done) { forceTab = 8; autotestPhase = 153; autotestWait = 8; } break;
         case 153: shot("flick_frf_a.bmp"); autotestPhase = 154; autotestWait = 9; break;
         case 154: shot("flick_frf_b.bmp"); forceTab = 2; autotestPhase = 155; autotestWait = 9; break;
         case 155: shot("flick_path_a.bmp"); autotestPhase = 156; autotestWait = 9; break;
-        case 156: shot("flick_path_b.bmp"); forceTab = 4; autotestPhase = 157; autotestWait = 9; break;
+        case 156: shot("flick_path_b.bmp"); forceTab = 5; autotestPhase = 157; autotestWait = 9; break;
         case 157: shot("flick_spec_a.bmp"); autotestPhase = 158; autotestWait = 9; break;
         case 158: shot("flick_spec_b.bmp"); autotestPhase = 107; autotestWait = 3; break;
         case 160: startRun(true); perfT0 = now; perfTab = 0; autotestPhase = 161; break;                                                // timing of the sag after contact
         case 161: { static const double at[] = {0.30, 0.55, 0.95, 1.60, 3.20};
                     if (now - perfT0 >= at[perfTab]) { char nm[48]; std::snprintf(nm, sizeof nm, "timing_%d.bmp", perfTab); pendingShot = nm; if (++perfTab >= 5) autotestPhase = 107; } } break;
+        case 170: showWelcome = false; designsDir = autotestDir; coverTried = false;                                                   // dashboard and theme
+                  for (int k : {0, 5, 18, 19, 20}) saveModelFile(autotestDir + "/" + exampleGallery()[k].title.substr(0, 20) + ".vlab", exampleGallery()[k].model);
+                  loadExample(19); projectsScanned = -100; focusDashboard = true; autotestPhase = 171; autotestWait = 150; break;
+        case 171: shot("ui_dash_dark.bmp"); autotestPhase = 172; autotestWait = 3; break;
+        case 172: setTheme(false); autotestPhase = 173; autotestWait = 8; break;
+        case 173: shot("ui_dash_light.bmp"); focusSim = true; autotestPhase = 174; autotestWait = 6; break;
+        case 174: startRun(true); autotestPhase = 175; autotestWait = 60; break;
+        case 175: shot("ui_sim_light.bmp"); autotestPhase = 176; autotestWait = 4; break;
+        case 176: setTheme(true); autotestPhase = 177; autotestWait = 8; break;
+        case 177: shot("ui_sim_dark.bmp"); autotestPhase = 107; autotestWait = 3; break;
+        case 180: showWelcome = false; autotestPhase = 182; autotestWait = 12; break;
+        case 182: { newDesign(); Model& m = design(); Body bx = makeBox(1.0, 0.6, *findMaterial("Steel"), Vec2(0, 0)); bx.massFromDensity = false; bx.mass = 20;
+                    bx.loadN = 250; bx.loadAngleDeg = 0; m.addBody(bx); m.addBody(makeFloor(8, 0, *findMaterial("Concrete"), Vec2(0, 0.5))); m.env.gravity = 9.81;
+                    selBody = 0; needFit = true; autotestPhase = 181; autotestWait = 14; } break;                                           // applied loads
+        case 181: shot("ui_load.bmp"); autotestPhase = 107; autotestWait = 3; break;
+        case 190: showWelcome = false; autotestPhase = 191; autotestWait = 12; break;                                                      // distributed loads
+        case 191: { newDesign(); Model& m = design(); Body bm = makeBeam(4.0, 0.2, *findMaterial("Steel"), Vec2(0, 1.0)); bm.massFromDensity = false; bm.mass = 100;
+                    bm.dloadType = DL_Equation; bm.dloadExpr = "500*sin(pi*x/L)"; int bi = m.addBody(bm);
+                    m.addSupport(LinkKind::Pin, bi, Vec2(-2, 1.0), 0); m.addSupport(LinkKind::Roller, bi, Vec2(2, 1.0), 0);
+                    m.run.duration = 4; selBody = bi; needFit = true; autotestPhase = 192; autotestWait = 14; } break;
+        case 192: shot("ui_dload_design.bmp"); startRun(true); autotestPhase = 193; autotestWait = 260; break;
+        case 193: shot("ui_dload_run.bmp"); autotestPhase = 107; autotestWait = 3; break;
+        case 200: showWelcome = false; autotestPhase = 201; autotestWait = 12; break;                                                      // cross-sections, diagrams, temperature
+        case 201: { newDesign(); Model& m = design(); Body bm = makeBeam(4.0, 0.2, *findMaterial("Steel"), Vec2(0, 1.0)); bm.massFromDensity = true;
+                    bm.secType = SEC_I; bm.secB = 0.12; bm.secH = 0.24; bm.secTf = 0.012; bm.secTw = 0.007; bm.dloadType = DL_Uniform; bm.dloadN = 6000; bm.tempGrad = 40; bm.tempDelta = 30;
+                    int bi = m.addBody(bm); m.addSupport(LinkKind::Pin, bi, Vec2(-2, 1.0), 0); m.addSupport(LinkKind::Pin, bi, Vec2(2, 1.0), 0);
+                    m.run.duration = 3; m.updateMass(); selBody = bi; needFit = true; propScrollY = 520; autotestPhase = 202; autotestWait = 14; } break;
+        case 202: shot("ui_section_props.bmp"); startRun(false); autotestPhase = 203; break;
+        case 203: if (state == RunState::Done) { forceTab = 4; diagSubForce = 0; autotestPhase = 204; autotestWait = 8; } break;
+        case 204: shot("ui_diagrams.bmp"); diagSubForce = 1; autotestPhase = 205; autotestWait = 8; break;
+        case 205: shot("ui_sectionstress.bmp"); autotestPhase = 107; autotestWait = 3; break;
+        case 210: showWelcome = false; autotestPhase = 211; autotestWait = 12; break;                                                      // the segmented sidebar
+        case 211: loadExample(19); startRun(false); autotestPhase = 212; break;
+        case 212: if (state == RunState::Done) { exportAll = false; sideOpen = 4; autotestPhase = 213; autotestWait = 10; } break;
+        case 213: shot("nav_data.bmp"); sideOpen = 2; autotestPhase = 214; autotestWait = 8; break;
+        case 214: shot("nav_setup.bmp"); sideOpen = 3; autotestPhase = 215; autotestWait = 8; break;
+        case 215: shot("nav_grid.bmp"); sideOpen = 0; autotestPhase = 216; autotestWait = 8; break;
+        case 216: shot("nav_physical.bmp"); autotestPhase = 107; autotestWait = 3; break;
+        case 220: showWelcome = false; autotestPhase = 221; autotestWait = 12; break;                                                      // the Object section and a drop-down
+        case 221: { newDesign(); Model& m = design(); Body bx = makeBox(1.0, 0.6, *findMaterial("Steel"), Vec2(0, 0)); bx.massFromDensity = false; bx.mass = 20; m.addBody(bx);
+                    selBody = 0; needFit = true; autotestPhase = 222; autotestWait = 14; } break;
+        case 222: shot("nav_object.bmp"); navMenu = 0; autotestPhase = 223; autotestWait = 6; break;
+        case 223: shot("nav_popup.bmp"); autotestPhase = 107; autotestWait = 3; break;
+        case 230: showWelcome = false; autotestPhase = 231; autotestWait = 12; break;                                                      // a real click on Run
+        case 231: loadExample(18); autotestPhase = 232; autotestWait = 14; break;
+        case 232: click(ImVec2(canvasMin.x + 60, canvasMin.y + 21), 0); autotestPhase = 233; autotestWait = 5; break;
+        case 233: { FILE* f = std::fopen((autotestDir + "/clickrun.txt").c_str(), "w"); if (f) { std::fprintf(f, "after clicking Run: state %s, t = %.3f s", stateName(), ses.hasWorld() ? ses.simTime() : 0.0); std::fclose(f); }
+                    autotestPhase = 234; autotestWait = 20; } break;
+        case 234: shot("click_run.bmp"); autotestPhase = 107; autotestWait = 3; break;
         case 107: say("autotest finished"); autotestQuit = true; autotestPhase = 108; break;
         case 64: say("autotest finished"); autotestQuit = true; autotestPhase = 65; break;
         default: break;
@@ -688,7 +825,7 @@ void App::frame(float dt) {
     handleShortcuts();
     advanceRun(dt);
     if (platform) {
-        std::string title = "Vibration Lab Suite  -  " + design().name + (dirty ? " *" : "") + "  [" + stateName() + "]";
+        std::string title = "VL Lab Mechanics Suite  -  " + design().name + (dirty ? " *" : "") + "  [" + stateName() + "]";
         static std::string lastTitle;
         if (title != lastTitle) { platform->setTitle(title); lastTitle = title; }
     }
@@ -702,17 +839,22 @@ void App::frame(float dt) {
         resetLayout = false;
     }
     drawMenuBar();
-    drawCanvas();
-    drawLibrary();
-    drawRunPanel();
-    drawProperties();
-    drawEnvironment();
-    drawTelemetry();
+    if (pageDashboard) drawDashboard();
+    else drawCanvas();
+    drawSidebar();
+    if (!pageDashboard) drawTelemetry();
     if (showWelcome) drawWelcome();
     if (showAbout) drawAbout();
     if (showHelp) drawHelp();
     drawToast();
     if (!ImGui::IsAnyItemActive() && !ImGui::IsMouseDown(0)) undoPushed = false;
+    // bring the right tab forward: Properties when something new is selected, Run when a run starts, the Dashboard on start-up
+    if ((selBody >= 0 && selBody != lastSelBody) || (selLink >= 0 && selLink != lastSelLink)) sideOpen = 1;
+    lastSelBody = selBody;
+    lastSelLink = selLink;
+    if (focusSim) { pageDashboard = false; focusSim = false; }
+    if (focusDashboard) { pageDashboard = true; dashJustShown = true; focusDashboard = false; }
+    if (focusWindow) { ImGui::SetWindowFocus(focusWindow); focusWindow = nullptr; }
 }
 
 void App::buildDefaultLayout(unsigned rootId) {
@@ -721,17 +863,14 @@ void App::buildDefaultLayout(unsigned rootId) {
     ImGui::DockBuilderRemoveNode(root);
     ImGui::DockBuilderAddNode(root, ImGuiDockNodeFlags_DockSpace);
     ImGui::DockBuilderSetNodeSize(root, vp->Size);
-    ImGuiID left, rest, right, centre, bottom, rtop, rbottom;
-    ImGui::DockBuilderSplitNode(root, ImGuiDir_Left, 0.16f, &left, &rest);
-    ImGui::DockBuilderSplitNode(rest, ImGuiDir_Right, 0.26f, &right, &centre);
-    ImGui::DockBuilderSplitNode(centre, ImGuiDir_Down, 0.36f, &bottom, &centre);
-    ImGui::DockBuilderSplitNode(right, ImGuiDir_Up, 0.62f, &rtop, &rbottom);
-    ImGui::DockBuilderDockWindow("Library", left);
+    ImGuiID left, rest, centre, bottom;
+    ImGui::DockBuilderSplitNode(root, ImGuiDir_Left, 0.21f, &left, &rest);          // one sidebar on the left, canvas and telemetry to its right
+    ImGui::DockBuilderSplitNode(rest, ImGuiDir_Down, 0.42f, &bottom, &centre);
+    ImGui::DockBuilderDockWindow("Sidebar", left);
     ImGui::DockBuilderDockWindow("Simulation", centre);
     ImGui::DockBuilderDockWindow("Telemetry", bottom);
-    ImGui::DockBuilderDockWindow("Run", rtop);
-    ImGui::DockBuilderDockWindow("Properties", rbottom);
-    ImGui::DockBuilderDockWindow("Environment", rbottom);
+    if (ImGuiDockNode* ln = ImGui::DockBuilderGetNode(left)) ln->LocalFlags |= ImGuiDockNodeFlags_HiddenTabBar;      // the sidebar needs no tab
+    focusDashboard = true;
     ImGui::DockBuilderFinish(root);
 }
 

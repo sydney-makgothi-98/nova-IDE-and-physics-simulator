@@ -1,21 +1,31 @@
 // ui_panels.cpp -- menu bar, Library, Properties, Environment, Run panel, and the small dialogs.
 #include <algorithm>
 #include <cmath>
+#include <cstdarg>
 #include <cstdio>
+#include <cstring>
 #include <utility>
 #include "app.hpp"
 
 namespace vlab {
 
 // ====================================================================== small widgets
+// every navbar button is the same blue; the one that is active gets a white outline
+static void pushNavStyle(bool active) {
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.17f, 0.40f, 0.88f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.26f, 0.50f, 0.98f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.12f, 0.32f, 0.75f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+    ImGui::PushStyleColor(ImGuiCol_Border, active ? ImVec4(1, 1, 1, 0.95f) : ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, active ? 2.0f : 0.0f);
+}
+static void popNavStyle() { ImGui::PopStyleVar(); ImGui::PopStyleColor(5); }
+
 static bool toolButton(App& a, const char* label, Tool t, const char* tip, float w = 0) {
     bool active = a.tool == t;
-    if (active) {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.45f, 0.95f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.28f, 0.52f, 1.0f, 1.0f));
-    }
+    pushNavStyle(active);
     bool clicked = ImGui::Button(label, ImVec2(w, 0));
-    if (active) ImGui::PopStyleColor(2);
+    popNavStyle();
     if (ImGui::IsItemHovered() && tip && *tip) ImGui::SetTooltip("%s", tip);
     if (clicked) { a.tool = t; a.linkFirst = -1; }
     return clicked;
@@ -76,6 +86,8 @@ static bool materialCombo(const char* id, int* idx, const char* custom = nullptr
 void App::drawMenuBar() {
     if (!ImGui::BeginMainMenuBar()) return;
     if (ImGui::BeginMenu("File")) {
+        if (ImGui::MenuItem("Dashboard")) focusDashboard = true;
+        ImGui::Separator();
         if (ImGui::MenuItem("New design", "Ctrl+N")) newDesign();
         if (ImGui::MenuItem("Open design...", "Ctrl+O")) loadDesignDialog();
         if (ImGui::MenuItem("Save", "Ctrl+S")) saveDesign(false);
@@ -127,10 +139,13 @@ void App::drawMenuBar() {
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("View")) {
+        if (ImGui::MenuItem("Light theme", nullptr, !darkTheme)) setTheme(false);
+        if (ImGui::MenuItem("Dark theme", nullptr, darkTheme)) setTheme(true);
+        ImGui::Separator();
         ImGui::MenuItem("Grid", nullptr, &showGrid);
         ImGui::MenuItem("Snap to grid", nullptr, &snap);
         ImGui::MenuItem("Contact points", nullptr, &showContacts);
-        ImGui::MenuItem("Names and masses", nullptr, &showLabels);
+        ImGui::MenuItem("Legend", nullptr, &showLabels);
         ImGui::MenuItem("Velocity arrows", nullptr, &showVectors);
         ImGui::Separator();
         if (ImGui::MenuItem("Fit view to the design", "Home")) needFit = true;
@@ -189,31 +204,124 @@ static bool menuItem(App& a, Tool t, const char* key, const char* desc) {
     return picked;
 }
 
-void App::drawLibrary() {
-    ImGui::Begin("Library");
+// ---- the sidebar: a brand block, then groups, each with a heading and a line saying what it is for; the SETTINGS items open their panel in place
+static ImVec4 gCardBg;
+static ImVec2 gCardStart;
+static float gCardW = 0;
+// a card: a rounded panel behind a group of widgets. The background is added once the group's height is known (no child window needed).
+static void beginCard(const char*) {
+    gCardStart = ImGui::GetCursorScreenPos();
+    gCardW = ImGui::GetContentRegionAvail().x;
+    ImGui::GetWindowDrawList()->ChannelsSplit(2);
+    ImGui::GetWindowDrawList()->ChannelsSetCurrent(1);
+    ImGui::BeginGroup();
+    ImGui::Dummy(ImVec2(0, 3));
+    ImGui::Indent(9);
+}
+static void endCard() {
+    ImGui::Unindent(9);
+    ImGui::Dummy(ImVec2(0, 5));
+    ImGui::EndGroup();
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    const ImVec2 p1(gCardStart.x + gCardW + 9, ImGui::GetItemRectMax().y);   // the widgets end at the window content edge: the card reaches 9 px past it, so the padding is even
+    d->ChannelsSetCurrent(0);
+    d->AddRectFilled(gCardStart, p1, ImGui::ColorConvertFloat4ToU32(gCardBg), 8.0f);
+    d->AddRect(gCardStart, p1, ImGui::GetColorU32(ImGuiCol_Border), 8.0f);
+    d->ChannelsMerge();
+}
+static void dimWrapped(const char* text) {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped("%s", text);
+    ImGui::PopStyleColor();
+}
+// a group heading (small capitals) with its description under it
+static void sideHeading(const char* title, const char* desc) {
+    ImGui::Dummy(ImVec2(0, 6));
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    d->AddText(ImGui::GetFont(), 14.5f, p, ImGui::GetColorU32(ImGuiCol_TextDisabled), title);
+    ImGui::Dummy(ImVec2(0, 20));
+    if (desc && *desc) dimWrapped(desc);
+    ImGui::Dummy(ImVec2(0, 2));
+}
+// a collapsible group header: heading text with a chevron, click to fold or unfold
+static bool sideHeader(const char* id, const char* title, bool open) {
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    const float w = ImGui::GetContentRegionAvail().x;
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(0, 6));
+    p = ImGui::GetCursorScreenPos();
+    ImGui::PushID(id);
+    bool clicked = ImGui::InvisibleButton("##hdr", ImVec2(w, 24));
+    ImGui::PopID();
+    const ImU32 col = ImGui::GetColorU32(ImGui::IsItemHovered() ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+    d->AddText(ImGui::GetFont(), 14.5f, ImVec2(p.x, p.y + 3), col, title);
+    const float cx = p.x + w - 12, cy = p.y + 12;
+    if (open) { d->AddLine(ImVec2(cx - 5, cy - 2), ImVec2(cx, cy + 3), col, 2.0f); d->AddLine(ImVec2(cx, cy + 3), ImVec2(cx + 5, cy - 2), col, 2.0f); }
+    else { d->AddLine(ImVec2(cx - 2, cy - 5), ImVec2(cx + 3, cy), col, 2.0f); d->AddLine(ImVec2(cx + 3, cy), ImVec2(cx - 2, cy + 5), col, 2.0f); }
+    return clicked;
+}
+static bool sideButton(const char* label, bool active, int chevron /* 0 none, 1 closed, 2 open */) {
+    char text[120];
+    std::snprintf(text, sizeof text, "%s%s##%s", label, chevron == 0 ? "" : (chevron == 1 ? "   >" : "   v"), label);
+    pushNavStyle(active);
+    bool c = ImGui::Button(text, ImVec2(ImGui::GetContentRegionAvail().x, 34));
+    popNavStyle();
+    return c;
+}
+
+void App::drawSidebar() {
+    gCardBg = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
+    if (propScrollY >= 0) { ImGui::SetNextWindowScroll(ImVec2(0, propScrollY)); propScrollY = -1; }
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12, 12));
+    ImGui::Begin("Sidebar", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse);
+    ImGui::PopStyleVar();
     const std::vector<Material>& lib = materialLibrary();
     const float full = ImGui::GetContentRegionAvail().x;
     const ImVec2 bsz(full, 34);
 
+    {   // brand block: glossy blue logo, name
+        ImDrawList* d = ImGui::GetWindowDrawList();
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        d->AddRectFilled(p, ImVec2(p.x + 38, p.y + 38), IM_COL32(28, 92, 224, 255), 9.0f);
+        d->AddRectFilled(ImVec2(p.x, p.y + 19), ImVec2(p.x + 38, p.y + 38), IM_COL32(8, 38, 150, 170), 9.0f, ImDrawFlags_RoundBottom);
+        d->AddRectFilled(ImVec2(p.x + 2, p.y + 2), ImVec2(p.x + 36, p.y + 17), IM_COL32(255, 255, 255, 78), 7.0f, ImDrawFlags_RoundTop);
+        d->AddRect(p, ImVec2(p.x + 38, p.y + 38), IM_COL32(150, 200, 255, 210), 9.0f, 1.5f);
+        d->AddText(ImGui::GetFont(), 19.0f, ImVec2(p.x + 9, p.y + 11), IM_COL32(0, 30, 110, 150), "VL");
+        d->AddText(ImGui::GetFont(), 19.0f, ImVec2(p.x + 8, p.y + 9), IM_COL32(255, 255, 255, 255), "VL");
+        d->AddText(ImGui::GetFont(), 19.0f, ImVec2(p.x + 48, p.y + 1), ImGui::GetColorU32(ImGuiCol_Text), "VL Lab");
+        d->AddText(ImVec2(p.x + 48, p.y + 22), ImGui::GetColorU32(ImGuiCol_TextDisabled), "Mechanics suite");
+        ImGui::Dummy(ImVec2(full, 44));
+    }
+    if (sideButton("Dashboard", pageDashboard, 0)) focusDashboard = true;
+    if (sideButton("Workspace", !pageDashboard, 0)) focusSim = true;
+
+    // ---- DESIGN TOOLS
+    if (sideHeader("tools", "DESIGN TOOLS", toolsOpen)) toolsOpen = !toolsOpen;
+    dimWrapped("Build the system on the canvas: bodies, ground and supports, connections, or start from an example.");
+    ImGui::Dummy(ImVec2(0, 2));
+
     // ---- the navbar: each button opens a drop-down list to its right
     auto navButton = [&](const char* label, const char* popupId, bool active, int index) {
-        if (active) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.45f, 0.95f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.28f, 0.52f, 1.0f, 1.0f));
-        }
+        pushNavStyle(active);
         char text[96];
         std::snprintf(text, sizeof text, "%s   >##%s", label, popupId);
         bool clicked = ImGui::Button(text, bsz);
-        if (active) ImGui::PopStyleColor(2);
+        popNavStyle();
         ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
         if (clicked || navMenu == index) { ImGui::OpenPopup(popupId); if (navMenu == index) navMenu = -1; }
         ImGui::SetNextWindowPos(ImVec2(mx.x + 6, mn.y), ImGuiCond_Always);
         return std::make_pair(ImGui::BeginPopup(popupId), clicked);
     };
 
-    if (toolButton(*this, "Select / move (V)", Tool::Select, "Click to select, drag to move. While running, drag to push.", full)) {}
-    ImGui::Spacing();
-
+    if (toolsOpen) {
+    {
+        pushNavStyle(tool == Tool::Select);
+        bool clicked = ImGui::Button("Select / move (V)", bsz);
+        popNavStyle();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to select, drag to move. While running, drag to push.");
+        if (clicked) { tool = Tool::Select; linkFirst = -1; }
+    }
     const bool isObject = tool == Tool::Circle || tool == Tool::Box || tool == Tool::Polygon || tool == Tool::Wedge || tool == Tool::Beam;
     if (navButton("Objects", "nav_objects", isObject, 0).first) {
         ImGui::TextUnformatted("OBJECTS  (they move and fall)");
@@ -277,16 +385,15 @@ void App::drawLibrary() {
         ImGui::EndPopup();
     }
 
-    ImGui::Separator();
+    }                                                                         // end of the DESIGN TOOLS group
     if (tool == Tool::Select) {
-        ImGui::TextDisabled("Pick something from the menus above, then click the canvas.");
+        dimWrapped("Pick a tool above, then click the canvas to place it.");
     } else {
-        ImGui::Text("Placing: %s", toolTitle(tool));
-        ImGui::TextDisabled("Esc cancels. Shift keeps placing.");
-    }
-
-    // ---- settings for whatever is about to be placed
-    ImGui::Spacing();
+    beginCard("##nextcard");
+    ImGui::PushID("nextone");
+    ImGui::Text("Placing: %s", toolTitle(tool));
+    ImGui::TextDisabled("Esc cancels. Shift keeps placing.");
+    ImGui::Separator();
     ImGui::TextUnformatted("Settings for the next one");
     switch (tool) {
         case Tool::Circle:
@@ -350,21 +457,63 @@ void App::drawLibrary() {
         if (ImGui::Button("0", ImVec2(40, 0))) nextAngle = 0;
         if (tool == Tool::SupportRoller) ImGui::TextDisabled("0 deg = the beam may slide sideways (left-right).");
     }
-    ImGui::Separator();
-    ImGui::TextDisabled("Grid snapping");
-    ImGui::Checkbox("Snap to grid", &snap);
-    if (snap) {
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(70);
-        float s = (float)snapStep;
-        if (ImGui::DragFloat("##snap", &s, 0.01f, 0.01f, 1.0f, "%.2f m")) snapStep = s;
+    ImGui::PopID();
+    endCard();
+    }
+
+    // ---- SETTINGS: five sections that open in place under their button
+    sideHeading("SETTINGS", "Set up the physics, the selected object, the run, the grid and the data you take away.");
+    static const char* setNames[5] = {"Physical settings", "Object properties", "Simulation setup", "Grid settings", "Data extraction"};
+    static const char* setDesc[5] = {"Ideal or realistic, friction, air drag, temperature, dead load, gravity.",
+                                     "Size, material, cross-section, loads and temperature of the selected object.",
+                                     "Run time, data rate, physics step, speed and the starting state.",
+                                     "The grid, snapping and what is drawn on the canvas.",
+                                     "Where the files go, which data, CSV or Excel, screen recording."};
+    for (int i = 0; i < 5; ++i) {
+        if (sideButton(setNames[i], sideOpen == i, sideOpen == i ? 2 : 1)) sideOpen = sideOpen == i ? -1 : i;
+        if (sideOpen != i) continue;
+        dimWrapped(setDesc[i]);
+        char cid[24];
+        std::snprintf(cid, sizeof cid, "##card%d", i);
+        beginCard(cid);
+        ImGui::PushID(i);
+        switch (i) {
+            case 0: drawEnvironment(); break;
+            case 1: drawProperties(); break;
+            case 2: drawRunPanel(); break;
+            case 3: drawGrid(); break;
+            default: drawData(); break;
+        }
+        ImGui::PopID();
+        endCard();
+    }
+
+    // ---- VIEW
+    sideHeading("VIEW", "Light or dark interface.");
+    if (sideButton(darkTheme ? "Switch to light mode" : "Switch to dark mode", false, 0)) setTheme(!darkTheme);
+
+    // ---- the strip at the bottom (like the signed-in user and Log out of a web app): the open design and Save
+    {
+        const float yEnd = ImGui::GetScrollY() + ImGui::GetWindowHeight() - 62;
+        if (ImGui::GetCursorPosY() < yEnd) ImGui::SetCursorPosY(yEnd);
+        ImGui::Separator();
+        ImDrawList* d = ImGui::GetWindowDrawList();
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        d->AddCircleFilled(ImVec2(p.x + 18, p.y + 22), 16, IM_COL32(28, 92, 224, 255));
+        d->AddCircleFilled(ImVec2(p.x + 18, p.y + 17), 11, IM_COL32(255, 255, 255, 60));
+        const std::string nm = design().name.empty() ? std::string("Untitled") : design().name;
+        d->AddText(ImGui::GetFont(), 17.0f, ImVec2(p.x + 42, p.y + 5), IM_COL32(255, 255, 255, 0), "");
+        d->AddText(ImVec2(p.x + 42, p.y + 5), ImGui::GetColorU32(ImGuiCol_Text), (nm.substr(0, 22) + (dirty ? " *" : "")).c_str());
+        d->AddText(ImVec2(p.x + 42, p.y + 24), ImGui::GetColorU32(ImGuiCol_TextDisabled), stateName());
+        ImGui::SetCursorScreenPos(ImVec2(p.x + full - 56, p.y + 10));
+        if (ImGui::SmallButton("Save")) saveDesign(false);
+        ImGui::Dummy(ImVec2(0, 30));
     }
     ImGui::End();
 }
 
 // ====================================================================== Properties
 void App::drawProperties() {
-    ImGui::Begin("Properties");
     Model& m = design();
     auto commit = [&]() { pushUndo(); m.updateMass(); edited(); };
 
@@ -378,12 +527,126 @@ void App::drawProperties() {
         if (ImGui::InputText("##name", nm, sizeof nm)) { pushUndo(); b.name = nm; edited(); }
         ImGui::TextDisabled(b.kind == BodyKind::Dynamic ? "Moving body" : (b.kind == BodyKind::Static ? (b.shape.preset == ShapePreset::Line ? "Floor line (zero thickness)" : "Fixed slab") : "Fixed anchor point"));
         ImGui::Separator();
+        if (b.isDynamic()) {
+            ImGui::TextUnformatted("Apply a load  (a steady push or pull on this object)");
+            {
+                bool c2 = false;
+                const float hw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2;
+                if (!b.loadPull) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.17f, 0.40f, 0.88f, 1.0f));
+                if (ImGui::Button("Push", ImVec2(hw, 0))) { b.loadPull = false; c2 = true; }
+                if (!b.loadPull) ImGui::PopStyleColor();
+                ImGui::SameLine();
+                if (b.loadPull) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.17f, 0.40f, 0.88f, 1.0f));
+                if (ImGui::Button("Pull", ImVec2(hw, 0))) { b.loadPull = true; c2 = true; }
+                if (b.loadPull) ImGui::PopStyleColor();
+                // the same load in newtons and in kilograms-force: edit either one
+                const double kgPerN = 1.0 / 9.80665;
+                double kg = b.loadN * kgPerN;
+                ImGui::TextUnformatted("Load (newtons)");
+                ImGui::SameLine(hw + ImGui::GetStyle().ItemSpacing.x + ImGui::GetStyle().WindowPadding.x);
+                ImGui::TextUnformatted("= kilograms");
+                ImGui::SetNextItemWidth(hw);
+                if (ImGui::InputDouble("##loadN", &b.loadN, 10.0, 100.0, "%.2f N")) { b.loadN = std::clamp(b.loadN, 0.0, 1.0e7); c2 = true; }
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(hw);
+                if (ImGui::InputDouble("##loadKg", &kg, 1.0, 10.0, "%.3f kg")) { b.loadN = std::clamp(kg, 0.0, 1.0e6) * 9.80665; c2 = true; }
+                labelled("Direction (deg: 0 = right, 90 = down, 180 = left, 270 = up)");
+                c2 |= numField("##loadA", &b.loadAngleDeg, 5, "%.1f", -360, 360);
+                const char* dirs[4] = {"Right", "Down", "Left", "Up"};
+                const float dirAngle[4] = {0, 90, 180, 270};
+                const float qw = (ImGui::GetContentRegionAvail().x - 3 * ImGui::GetStyle().ItemSpacing.x) / 4;
+                for (int k = 0; k < 4; ++k) {
+                    if (k) ImGui::SameLine();
+                    if (ImGui::Button(dirs[k], ImVec2(qw, 0))) { b.loadAngleDeg = dirAngle[k]; c2 = true; }
+                }
+                if (b.loadN > 0) ImGui::TextDisabled("%s %.1f N (%.2f kg) along %.0f deg%s", b.loadPull ? "Pulling with" : "Pushing with", b.loadN, b.loadN * kgPerN, b.loadAngleDeg, b.loadPull ? ", the opposite way" : "");
+                if (c2) commit();
+            }
+            if (b.shape.preset == ShapePreset::Box) {
+                ImGui::Spacing();
+                ImGui::TextUnformatted("Distributed load  (spread along the length)");
+                bool c3 = false;
+                const char* types[] = {"None", "Uniform (rectangular)", "Triangular, rising to the right", "Triangular, falling to the right", "Triangular, peak in the middle", "Equation  q(x)"};
+                int ty = b.dloadType;
+                ImGui::SetNextItemWidth(-1);
+                if (ImGui::Combo("##dltype", &ty, types, 6)) {
+                    b.dloadType = ty;
+                    if (ty != DL_None && ty != DL_Equation && b.dloadN <= 0) b.dloadN = 500;
+                    if (ty == DL_Equation && b.dloadExpr.empty()) b.dloadExpr = "500*sin(pi*x/L)";
+                    c3 = true;
+                }
+                if (b.dloadType != DL_None) {
+                    const float hw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2;
+                    if (b.dloadType != DL_Equation) {
+                        ImGui::TextUnformatted("Peak intensity (N per metre)");
+                        ImGui::SameLine(hw + ImGui::GetStyle().ItemSpacing.x + ImGui::GetStyle().WindowPadding.x);
+                        ImGui::TextUnformatted("= kg per metre");
+                        double kgm = b.dloadN / 9.80665;
+                        ImGui::SetNextItemWidth(hw);
+                        if (ImGui::InputDouble("##dlN", &b.dloadN, 50.0, 500.0, "%.1f N/m")) { b.dloadN = std::clamp(b.dloadN, 0.0, 1.0e7); c3 = true; }
+                        ImGui::SameLine();
+                        ImGui::SetNextItemWidth(hw);
+                        if (ImGui::InputDouble("##dlKg", &kgm, 5.0, 50.0, "%.2f kg/m")) { b.dloadN = std::clamp(kgm, 0.0, 1.0e6) * 9.80665; c3 = true; }
+                    } else {
+                        ImGui::TextUnformatted("q(x) in N per metre:");
+                        char buf[200];
+                        std::snprintf(buf, sizeof buf, "%s", b.dloadExpr.c_str());
+                        ImGui::SetNextItemWidth(-1);
+                        if (ImGui::InputText("##dlexpr", buf, sizeof buf)) { b.dloadExpr = buf; c3 = true; }
+                        std::string err;
+                        std::shared_ptr<const Expr> ex = Expr::cached(b.dloadExpr, &err);
+                        if (!ex) ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1.0f), "Not a valid formula: %s", err.c_str());
+                        const struct { const char* n; const char* f; } presets[] = {{"Sine", "500*sin(pi*x/L)"}, {"Parabola", "3200*x*(L-x)/L^2"}, {"Ramp", "300*x/L"}, {"Polynomial", "100+60*x+40*x^2"}, {"Cosine", "400+400*cos(2*pi*x/L)"}};
+                        const float pw = (ImGui::GetContentRegionAvail().x - 4 * ImGui::GetStyle().ItemSpacing.x) / 5;
+                        for (int k = 0; k < 5; ++k) {
+                            if (k) ImGui::SameLine();
+                            if (ImGui::Button(presets[k].n, ImVec2(pw, 0))) { b.dloadExpr = presets[k].f; c3 = true; }
+                        }
+                        ImGui::TextDisabled("x = distance from the left end (m), L = length (m), t = time (s), pi, e.   + - * / ^ ( )   sin cos tan sqrt abs exp ln pow(a,b) min(a,b) max(a,b) step(x)");
+                    }
+                    labelled("Direction (deg: 90 = down, 270 = up)");
+                    c3 |= numField("##dlA", &b.dloadAngleDeg, 5, "%.1f", -360, 360);
+                    double x0, x1;
+                    distributedLoadSpan(b, &x0, &x1);
+                    const float hw2 = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2;
+                    ImGui::TextUnformatted("From x (m)");
+                    ImGui::SameLine(hw2 + ImGui::GetStyle().ItemSpacing.x + ImGui::GetStyle().WindowPadding.x);
+                    ImGui::TextUnformatted("To x (m)");
+                    ImGui::SetNextItemWidth(hw2);
+                    double ax0 = x0, ax1 = x1;
+                    if (ImGui::InputDouble("##dlx0", &ax0, 0.1, 1.0, "%.2f")) { b.dloadX0 = std::clamp(ax0, 0.0, b.shape.w); c3 = true; }
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(hw2);
+                    if (ImGui::InputDouble("##dlx1", &ax1, 0.1, 1.0, "%.2f")) { b.dloadX1 = std::clamp(ax1, 0.0, b.shape.w); c3 = true; }
+                    if (ImGui::Button("Whole length", ImVec2(-1, 0))) { b.dloadX0 = 0; b.dloadX1 = -1; c3 = true; }
+                    {   // what the load adds up to
+                        std::string err;
+                        std::shared_ptr<const Expr> ex = b.dloadType == DL_Equation ? Expr::cached(b.dloadExpr, &err) : nullptr;
+                        double tot = 0, mom = 0, peak = 0;
+                        const int ns = 400;
+                        for (int k = 0; k < ns; ++k) {
+                            double xm = x0 + (x1 - x0) * (k + 0.5) / ns, q = distributedLoadAt(b, ex.get(), xm, 0.0), dx = (x1 - x0) / ns;
+                            tot += q * dx; mom += q * dx * xm; peak = std::max(peak, std::fabs(q));
+                        }
+                        if (std::fabs(tot) > 1e-9) ImGui::TextDisabled("Resultant %.1f N (%.2f kg) acting %.2f m from the left end.  Peak %.1f N/m (%.2f kg/m)", tot, tot / 9.80665, mom / tot, peak, peak / 9.80665);
+                        else ImGui::TextDisabled("This load adds up to zero.");
+                    }
+                }
+                if (c3) commit();
+            }
+            if (isBeamBody(b)) {                                                      // the dead load: the beam's own weight, spread along its length
+                const double mu = b.massKg / b.shape.w;
+                ImGui::Spacing();
+                ImGui::TextDisabled("Dead load (own weight): %.4g kg/m  =  %.4g N/m over the %.2f m length.  %s", mu, mu * m.env.gravity, b.shape.w, m.env.deadLoad ? "Included in the bending." : "Not applied: switch on Dead load on the canvas to include it.");
+            }
+            ImGui::Separator();
+        }
         if (b.kind != BodyKind::Anchor) {
             ImGui::TextUnformatted(b.shape.preset == ShapePreset::Line ? "Size" : "Shape and size");
             bool c = false;
             switch (b.shape.preset) {
                 case ShapePreset::Circle: labelled("Radius (m)"); c |= numField("##rad", &b.shape.radius, 0.05, "%.3f", 0.02, 10); break;
-                case ShapePreset::Box: labelled("Width (m)"); c |= numField("##bw", &b.shape.w, 0.1, "%.3f", 0.02, 60); labelled("Height (m)"); c |= numField("##bh", &b.shape.h, 0.1, "%.3f", 0.02, 60); break;
+                case ShapePreset::Box: labelled("Width (m)"); c |= numField("##bw", &b.shape.w, 0.1, "%.3f", 0.02, 60); labelled("Height (m)"); c |= numField("##bh", &b.shape.h, 0.1, "%.3f", 0.02, 60, b.secType != 0); break;
                 case ShapePreset::Regular: {
                     labelled("Radius (m)"); c |= numField("##prad", &b.shape.radius, 0.05, "%.3f", 0.02, 10);
                     labelled("Sides"); ImGui::SetNextItemWidth(-1);
@@ -395,6 +658,66 @@ void App::drawProperties() {
                 default: labelled("Leg along x (m)"); c |= numField("##ww", &b.shape.w, 0.1, "%.3f", 0.02, 20); labelled("Leg along y (m)"); c |= numField("##wh", &b.shape.h, 0.1, "%.3f", 0.02, 20); break;
             }
             if (c) commit();
+        }
+        if (b.isDynamic() && b.shape.preset == ShapePreset::Box) {
+            ImGui::Spacing();
+            ImGui::TextUnformatted("Cross-section  (seen end-on, bending about its horizontal axis)");
+            bool cs = false;
+            int ty = b.secType;
+            ImGui::SetNextItemWidth(-1);
+            if (ImGui::BeginCombo("##sectype", sectionName(ty))) {
+                for (int k = 0; k < SEC_COUNT; ++k) if (ImGui::Selectable(sectionName(k), k == ty)) ty = k;
+                ImGui::EndCombo();
+            }
+            if (ty != b.secType) {
+                if (b.secType == SEC_SLAB && ty != SEC_SLAB) {                       // start from sensible proportions of the current height
+                    b.secH = std::max(0.02, b.shape.h);
+                    b.secB = std::max(0.02, b.secH * 0.5);
+                    b.secTf = std::max(0.002, b.secH * 0.08);
+                    b.secTw = std::max(0.002, b.secH * 0.05);
+                }
+                b.secType = ty;
+                cs = true;
+            }
+            const int dims = sectionDims(b.secType);
+            const bool flanged = b.secType == SEC_I || b.secType == SEC_T || b.secType == SEC_CHANNEL;
+            if (dims & 1) { labelled(flanged ? "Flange width (m)" : "Width (m)"); cs |= numField("##secB", &b.secB, 0.01, "%.4f", 0.005, 5); }
+            if (dims & 2) { labelled((b.secType == SEC_CIRCLE || b.secType == SEC_TUBE) ? "Diameter (m)" : "Height (m)"); cs |= numField("##secH", &b.secH, 0.01, "%.4f", 0.02, 5); }
+            if (dims & 4) { labelled((b.secType == SEC_BOX || b.secType == SEC_TUBE) ? "Wall thickness (m)" : "Flange thickness (m)"); cs |= numField("##secTf", &b.secTf, 0.001, "%.4f", 0.001, 1); }
+            if (dims & 8) { labelled("Web thickness (m)"); cs |= numField("##secTw", &b.secTw, 0.001, "%.4f", 0.001, 1); }
+            if (cs) commit();
+            const Section sc = makeSection(b);
+            {
+                ImVec2 p0 = ImGui::GetCursorScreenPos();
+                const float sw = ImGui::GetContentRegionAvail().x;
+                drawSectionSketch(sc, p0, ImVec2(sw, 118), nullptr, palette());
+                ImGui::Dummy(ImVec2(sw, 122));
+            }
+            ImGui::TextDisabled("Area A = %.4g cm2     I (second moment of area) = %.5g cm4", sc.A * 1e4, sc.I * 1e8);
+            ImGui::TextDisabled("Section modulus Z = %.4g cm3     radius of gyration %.2f mm", sc.Z * 1e6, sc.rg * 1000.0);
+            ImGui::TextDisabled("Neutral axis %.2f mm from the top, %.2f mm from the bottom", sc.cTop * 1000.0, sc.cBot * 1000.0);
+            if (b.secType == SEC_SLAB) ImGui::TextDisabled("A slab is a rectangle 1 m wide (the plain 2-D beam). Pick a real section to design it.");
+            else if (b.massFromDensity) ImGui::TextDisabled("Mass = density x section area x length = %.4g kg", b.massKg);
+            if (isBeamBody(b)) ImGui::TextDisabled("E I = %.4g N m2 (bending stiffness)", b.mat.youngs * sc.I);
+            else ImGui::TextDisabled("This body is shorter than 4 x its height, so it is not treated as a beam.");
+
+            ImGui::Spacing();
+            ImGui::TextUnformatted("Temperature  (thermal expansion)");
+            bool ct = false;
+            labelled("Temperature change of this body (deg C)");
+            ct |= numField("##tdelta", &b.tempDelta, 5, "%.1f", -1000, 3000);
+            labelled("Lower face hotter than the upper face by (deg C)");
+            ct |= numField("##tgrad", &b.tempGrad, 5, "%.1f", -1000, 1000);
+            double al = b.mat.alphaT * 1e6;
+            labelled("Expansion coefficient alpha (x 1e-6 per K)");
+            if (numField("##alpha", &al, 1, "%.2f", 0, 1000)) { b.mat.alphaT = al * 1e-6; ct = true; }
+            if (ct) commit();
+            {
+                const double dT = b.tempDelta + m.env.deltaT, eps = b.mat.alphaT * dT, Lb = b.shape.w;
+                if (dT != 0) ImGui::TextDisabled("Free growth: strain %.0f microstrain = %.3f mm over %.2f m  (total change %.1f C)", eps * 1e6, eps * Lb * 1000.0, Lb, dT);
+                if (b.tempGrad != 0 && isBeamBody(b)) ImGui::TextDisabled("Free bow of a simply supported span: %.3f mm  (alpha dT L^2 / 8 h)", std::fabs(b.mat.alphaT * b.tempGrad) * Lb * Lb / (8 * sc.H) * 1000.0);
+                if (dT == 0 && b.tempGrad == 0) ImGui::TextDisabled("0 = no thermal effect. Pinned at both ends a beam cannot grow: heating it puts -E alpha dT of stress in it.");
+            }
         }
         if (b.isDynamic()) {
             ImGui::Spacing();
@@ -541,12 +864,10 @@ void App::drawProperties() {
         ImGui::Spacing();
         ImGui::Text("%d moving bodies, %d fixed, %d connections", m.dynamicCount(), (int)m.bodies.size() - m.dynamicCount(), (int)m.links.size());
     }
-    ImGui::End();
 }
 
 // ====================================================================== Environment
 void App::drawEnvironment() {
-    ImGui::Begin("Environment");
     Environment& e = design().env;
     auto commit = [&]() { pushUndo(); edited(); };
 
@@ -574,6 +895,7 @@ void App::drawEnvironment() {
     c |= ImGui::Checkbox("Rolling resistance", &e.rolling);
     c |= ImGui::Checkbox("Dampers active", &e.damping);
     c |= ImGui::Checkbox("Air drag", &e.airDrag);
+    c |= ImGui::Checkbox("Dead load: each beam's own weight bends it", &e.deadLoad);
     if (c) { e.realistic = e.friction && e.inelastic && e.damping; commit(); }
     if (e.airDrag) {
         labelled("Linear drag c1 (N s/m)"); if (numField("##d1", &e.drag1, 0.01, "%.4f", 0, 1000)) commit();
@@ -590,6 +912,10 @@ void App::drawEnvironment() {
     if (ImGui::SmallButton("Moon 1.62")) { commit(); e.gravity = 1.62; edited(); }
     ImGui::SameLine();
     if (ImGui::SmallButton("Zero-g")) { commit(); e.gravity = 0; edited(); }
+    ImGui::Spacing();
+    labelled("Temperature change of everything (deg C)");
+    if (numField("##envdt", &e.deltaT, 5, "%.1f", -1000, 3000)) commit();
+    ImGui::TextDisabled("Added to each body's own change: beams expand, held beams build up stress.");
 
     if (ImGui::TreeNode("Advanced")) {
         const char* cmb[] = {"Geometric mean", "Average", "Minimum", "Maximum"};
@@ -610,14 +936,24 @@ void App::drawEnvironment() {
         if (ImGui::SliderInt("##it", &it, 4, 40, "contact iterations %d")) { e.solverIterations = it; commit(); }
         ImGui::TreePop();
     }
-    ImGui::End();
 }
 
 // ====================================================================== Run panel
+// a dim paragraph that wraps inside a narrow panel
+static void wrapDisabled(const char* fmt, ...) {
+    char buf[600];
+    va_list ap;
+    va_start(ap, fmt);
+    std::vsnprintf(buf, sizeof buf, fmt, ap);
+    va_end(ap);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped("%s", buf);
+    ImGui::PopStyleColor();
+}
+
 void App::drawRunPanel() {
-    ImGui::Begin("Run");
     Model& m = design();
-    ImGui::TextUnformatted("How long should the model run?");
+    ImGui::TextUnformatted("Run time");
     ImGui::SetNextItemWidth(-1);
     double dur = m.run.duration;
     if (numField("##dur", &dur, 1.0, "%.2f seconds", 0.05, 3600)) { pushUndo(); m.run.duration = dur; edited(); }
@@ -635,39 +971,29 @@ void App::drawRunPanel() {
     double hz = m.run.sampleHz;
     if (numField("##hz", &hz, 10, "%.0f rows/s", 1, 5000)) { pushUndo(); m.run.sampleHz = hz; edited(); }
     double rows = m.run.duration * std::min(m.run.sampleHz, 1e6 / std::max(1.0, m.run.duration));
-    ImGui::TextDisabled("about %.0f rows in the Excel sheet", rows);
+    ImGui::TextDisabled("about %.0f rows of data", rows);
     ImGui::Separator();
 
-    // ---- controls
-    bool hasDyn = m.dynamicCount() > 0;
-    float cw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 2) / 3;
-    const char* runLabel = state == RunState::Running ? "Pause" : (state == RunState::Paused ? "Resume" : (state == RunState::Done ? "Run again" : "Run"));
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.55f, 0.30f, 1));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.65f, 0.36f, 1));
-    ImGui::BeginDisabled(!hasDyn || state == RunState::Computing);
-    if (ImGui::Button(runLabel, ImVec2(cw, 32))) {
-        if (state == RunState::Design) startRun(true);
-        else if (state == RunState::Done) { stopRun(); startRun(true); }
-        else pause();
-    }
-    ImGui::EndDisabled();
-    ImGui::PopStyleColor(2);
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Run in real time (Space). You can drag bodies while it runs.");
-    ImGui::SameLine();
-    ImGui::BeginDisabled(state == RunState::Design);
-    if (ImGui::Button("Stop", ImVec2(cw, 32))) stopRun();
-    ImGui::EndDisabled();
-    ImGui::SameLine();
-    ImGui::BeginDisabled(!hasDyn || state == RunState::Running || state == RunState::Computing);
-    if (ImGui::Button("Step 1/60 s", ImVec2(cw, 32))) stepOnce();
-    ImGui::EndDisabled();
-    ImGui::BeginDisabled(!hasDyn || state == RunState::Running || state == RunState::Computing);
-    if (ImGui::Button("Compute the whole run now (fast)", ImVec2(-1, 0))) { if (state == RunState::Done || state == RunState::Paused) stopRun(); startRun(false); }
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Runs the entire duration as fast as the computer can, then shows all the data.");
+    ImGui::TextUnformatted("Speed and accuracy");
+    double dtms = m.env.dt * 1000.0;
+    labelled("Physics step (ms)");
+    if (numField("##dtms", &dtms, 0.05, "%.3f", 0.02, 2.0)) { pushUndo(); m.env.dt = dtms / 1000.0; edited(); }
+    helpMarker("Smaller is more accurate and slower. 0.25 ms is a good default.");
     float ts = (float)timeScale;
     ImGui::SetNextItemWidth(-1);
     if (ImGui::SliderFloat("##ts", &ts, 0.1f, 4.0f, "real-time speed %.2fx")) timeScale = ts;
+    wrapDisabled("Real-time speed slows or speeds up what you watch. The numbers do not change.");
+    ImGui::Separator();
+
+    ImGui::TextUnformatted("Initialization");
+    ImGui::TextWrapped("Every run starts from the drawn state: each body at its drawn position, with the starting velocity and spin set in Object > Starting motion, and the loads, temperatures and gravity set in Object and Physical.");
+    {
+        int fixedN = 0;
+        for (const Body& b : m.bodies) if (b.kind != BodyKind::Dynamic) ++fixedN;
+        ImGui::TextDisabled("%d moving bodies, %d fixed, %d connections", m.dynamicCount(), fixedN, (int)m.links.size());
+    }
+    if (ImGui::Button("Reset to the drawn start", ImVec2(-1, 0))) stopRun();
+    ImGui::Separator();
 
     // ---- progress
     double tnow = ses.hasWorld() ? ses.simTime() : (haveResults && !ses.telemetry().t.empty() ? ses.telemetry().t.back() : 0.0);
@@ -675,33 +1001,11 @@ void App::drawRunPanel() {
     char pb[96];
     std::snprintf(pb, sizeof pb, "%.2f / %.2f s   (%d%%)", tnow, m.run.duration, (int)(frac * 100));
     ImGui::ProgressBar(frac, ImVec2(-1, 0), pb);
+    ImGui::TextDisabled("Run, Pause and Stop are at the top of the canvas.");
     if (state == RunState::Computing) { if (ImGui::Button("Cancel", ImVec2(-1, 0))) stopRun(); }
     ImGui::TextWrapped("%s", statusLine.c_str());
     if (resultsStale && haveResults) ImGui::TextColored(ImVec4(1, 0.75f, 0.3f, 1), "The design changed after this run: run again to update the data.");
 
-    // ---- export
-    ImGui::Separator();
-    ImGui::TextUnformatted("Take the data with you");
-    ImGui::BeginDisabled(!haveResults || ses.telemetry().rows() == 0);
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.45f, 0.25f, 1));
-    if (ImGui::Button("Export to Excel (.xlsx) with charts", ImVec2(-1, 34))) exportExcelDialog();
-    ImGui::PopStyleColor();
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Creates a workbook: Summary, Telemetry (every sample), Charts, plus Spectrum / Modal / Frequency response if you computed them.");
-    float hw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2;
-    if (ImGui::Button("Export CSV", ImVec2(hw, 0))) exportCsvDialog();
-    ImGui::EndDisabled();
-    ImGui::SameLine();
-    if (recording) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.15f, 0.15f, 1));
-    if (ImGui::Button(recording ? "Stop recording" : "Record video (F9)", ImVec2(hw, 0))) { if (recording) stopRecording(); else startRecording(); }
-    if (recording) ImGui::PopStyleColor();
-    ImGui::Checkbox("Record the whole window", &recWholeWindow);
-    if (!lastExportPath.empty()) {
-        ImGui::TextDisabled("Last saved:");
-        ImGui::TextWrapped("%s", lastExportPath.c_str());
-        if (ImGui::SmallButton("Open")) openInShell(lastExportPath, false);
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Show in folder")) openInShell(lastExportPath, true);
-    }
     // ---- live energy ledger
     ImGui::Separator();
     if (ses.hasWorld()) {
@@ -721,17 +1025,190 @@ void App::drawRunPanel() {
     } else {
         ImGui::TextDisabled("Energy numbers appear here once it runs.");
     }
-
-    ImGui::End();
 }
+
+// ====================================================================== Grid panel
+void App::drawGrid() {
+    ImGui::TextUnformatted("Grid");
+    ImGui::Checkbox("Show the grid", &showGrid);
+    ImGui::Checkbox("Show the grid numbers", &showGridNumbers);
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Snapping");
+    ImGui::Checkbox("Snap to grid", &snap);
+    ImGui::BeginDisabled(!snap);
+    labelled("Snap step (m)");
+    double st = snapStep;
+    if (numField("##snapstep", &st, 0.05, "%.3f m", 0.005, 5)) snapStep = st;
+    const double presetsS[5] = {0.05, 0.1, 0.25, 0.5, 1.0};
+    const float pw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 4) / 5;
+    for (int i = 0; i < 5; ++i) {
+        if (i) ImGui::SameLine();
+        char lb[16];
+        std::snprintf(lb, sizeof lb, "%g", presetsS[i]);
+        bool cur = std::fabs(snapStep - presetsS[i]) < 1e-9;
+        if (cur) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.17f, 0.40f, 0.88f, 1.0f));
+        if (ImGui::Button(lb, ImVec2(pw, 0))) snapStep = presetsS[i];
+        if (cur) ImGui::PopStyleColor();
+    }
+    ImGui::EndDisabled();
+    wrapDisabled("Hold Alt while placing or dragging to ignore the snap.");
+    ImGui::Separator();
+    ImGui::TextUnformatted("What is drawn on the canvas");
+    ImGui::Checkbox("Legend (bottom left)", &showLabels);
+    ImGui::Checkbox("Contact points", &showContacts);
+    ImGui::Checkbox("Velocity arrows", &showVectors);
+    ImGui::Separator();
+    ImGui::TextUnformatted("View");
+    if (ImGui::Button("Fit the view to the design", ImVec2(-1, 0))) needFit = true;
+    wrapDisabled("Zoom: mouse wheel.  Pan: right or middle button drag.  Home fits the view.");
+    ImGui::TextDisabled("Scale now: %.0f pixels per metre", scale);
+    if (ImGui::Button("Reset the panel layout", ImVec2(-1, 0))) resetLayout = true;
+}
+
+// ====================================================================== Data extraction panel
+static bool endsWithText(const std::string& s, const char* suf) {
+    size_t n = std::strlen(suf);
+    return s.size() >= n && s.compare(s.size() - n, n, suf) == 0;
+}
+
+void App::drawData() {
+    bool settingsChanged = false;
+    auto pathRow = [&](const char* label, const char* id, std::string& dir) {
+        ImGui::TextUnformatted(label);
+        char buf[600];
+        std::snprintf(buf, sizeof buf, "%s", dir.c_str());
+        const float sp = ImGui::GetStyle().ItemSpacing.x, bw = 74.0f;
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 2 * bw - 2 * sp);
+        if (ImGui::InputText(id, buf, sizeof buf)) { dir = buf; settingsChanged = true; }
+        ImGui::SameLine();
+        ImGui::PushID(id);
+        if (ImGui::Button("Browse", ImVec2(bw, 0))) { std::string p = pickFolderDialog(label, dir); if (!p.empty()) { dir = p; settingsChanged = true; } }
+        ImGui::SameLine();
+        if (ImGui::Button("Open", ImVec2(bw, 0))) { ensureDirectory(dir); openInShell(dir, false); }
+        ImGui::PopID();
+    };
+    ImGui::TextUnformatted("Where the files go");
+    pathRow("Data files (CSV and Excel)", "##expdir", exportsDir);
+    pathRow("Screen recordings (.mp4)", "##recdir", recordingsDir);
+    {
+        char nb[200];
+        std::snprintf(nb, sizeof nb, "%s", exportBase.c_str());
+        labelled("File name (empty: the design name)");
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::InputText("##expbase", nb, sizeof nb)) { exportBase = nb; settingsChanged = true; }
+        if (ImGui::Checkbox("Add the date and time to the name", &exportStamp)) settingsChanged = true;
+        ImGui::TextDisabled("e.g. %s%s.csv", exportBaseName().c_str(), "");
+    }
+    ImGui::Separator();
+
+    ImGui::TextUnformatted("Which data to extract");
+    if (ImGui::RadioButton("All channels", exportAll)) { exportAll = true; settingsChanged = true; }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Only the channels I tick", !exportAll)) { exportAll = false; settingsChanged = true; }
+    const Telemetry& t = ses.telemetry();
+    if (!exportAll) {
+        if (t.channels.empty()) {
+            wrapDisabled("Run the model once: its channels are listed here.");
+        } else {
+            if (exportSel.size() != t.channels.size()) {
+                exportSel.assign(t.channels.size(), 0);
+                for (size_t c = 0; c < t.channels.size(); ++c) { const std::string& n = t.channels[c].name; if (endsWithText(n, " dx") || endsWithText(n, " dy")) exportSel[c] = 1; }
+            }
+            auto pick = [&](std::initializer_list<const char*> suffixes, const char* group, const char* unit) {
+                exportSel.assign(t.channels.size(), 0);
+                for (size_t c = 0; c < t.channels.size(); ++c) {
+                    const Channel& ch = t.channels[c];
+                    bool take = group && ch.group == group;
+                    if (unit && ch.unit == unit) take = true;
+                    for (const char* s : suffixes) if (endsWithText(ch.name, s)) take = true;
+                    if (take) exportSel[c] = 1;
+                }
+            };
+            const char* quick[7] = {"All", "None", "Positions", "Velocities", "Forces", "Energy", "Deformation"};
+            for (int qi = 0; qi < 7; ++qi) {
+                if (qi) {
+                    ImGui::SameLine();
+                    if (ImGui::GetContentRegionAvail().x < ImGui::CalcTextSize(quick[qi]).x + 2 * ImGui::GetStyle().FramePadding.x) ImGui::NewLine();
+                }
+                if (!ImGui::SmallButton(quick[qi])) continue;
+                switch (qi) {
+                    case 0: exportSel.assign(t.channels.size(), 1); break;
+                    case 1: exportSel.assign(t.channels.size(), 0); break;
+                    case 2: pick({" x", " y", " dx", " dy", " angle"}, nullptr, nullptr); break;
+                    case 3: pick({" vx", " vy", " speed", " omega"}, nullptr, nullptr); break;
+                    case 4: pick({}, nullptr, "N"); break;
+                    case 5: pick({}, "Energy", nullptr); break;
+                    default: pick({" deflection", " compression"}, nullptr, nullptr); break;
+                }
+            }
+            int on = 0;
+            for (char v : exportSel) on += v ? 1 : 0;
+            wrapDisabled("%d of %d channels ticked. (Excel always carries the Energy channels too: its summary sheet needs them.)", on, (int)t.channels.size());
+            ImGui::BeginChild("##exchan", ImVec2(-1, 190), true);
+            std::string group;
+            bool open = false;
+            for (size_t c = 0; c < t.channels.size(); ++c) {
+                if (t.channels[c].group != group) {
+                    if (open) ImGui::TreePop();
+                    group = t.channels[c].group;
+                    open = ImGui::TreeNodeEx(group.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
+                }
+                if (open) {
+                    std::string label = t.channels[c].name.substr(group.size() + 1) + (t.channels[c].unit.empty() ? "" : "  (" + t.channels[c].unit + ")");
+                    bool v = exportSel[c] != 0;
+                    ImGui::PushID((int)c);
+                    if (ImGui::Checkbox(label.c_str(), &v)) exportSel[c] = v ? 1 : 0;
+                    ImGui::PopID();
+                }
+            }
+            if (open) ImGui::TreePop();
+            ImGui::EndChild();
+        }
+    }
+    ImGui::Separator();
+
+    ImGui::TextUnformatted("Take the data now");
+    ImGui::BeginDisabled(!haveResults || ses.telemetry().rows() == 0);
+    {
+        const float hw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2;
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.45f, 0.25f, 1));
+        if (ImGui::Button("Excel (.xlsx) with charts", ImVec2(hw, 34))) { ensureDirectory(exportsDir); exportExcelTo(exportFileName(".xlsx")); }
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A workbook: Summary, Telemetry (every sample), Charts, plus Spectrum / Modal / Frequency response if you computed them.");
+        ImGui::SameLine();
+        if (ImGui::Button("CSV table (.csv)", ImVec2(hw, 34))) { ensureDirectory(exportsDir); exportCsvTo(exportFileName(".csv")); }
+    }
+    ImGui::EndDisabled();
+    if (!haveResults) ImGui::TextDisabled("Run the model first.");
+    if (ImGui::Checkbox("Save a CSV automatically when a run finishes", &autoExportCsv)) settingsChanged = true;
+    if (ImGui::Checkbox("Save an Excel workbook automatically when a run finishes", &autoExportXlsx)) settingsChanged = true;
+    if (!lastExportPath.empty()) {
+        ImGui::TextDisabled("Last saved:");
+        ImGui::TextWrapped("%s", lastExportPath.c_str());
+        if (ImGui::SmallButton("Open file")) openInShell(lastExportPath, false);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Show in folder")) openInShell(lastExportPath, true);
+    }
+    ImGui::Separator();
+
+    ImGui::TextUnformatted("Screen recording");
+    if (recording) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.15f, 0.15f, 1));
+    if (ImGui::Button(recording ? "Stop recording" : "Record video (F9)", ImVec2(-1, 32))) { if (recording) stopRecording(); else { ensureDirectory(recordingsDir); startRecording(); } }
+    if (recording) ImGui::PopStyleColor();
+    ImGui::Checkbox("Record the whole window, not just the canvas", &recWholeWindow);
+    if (ImGui::Checkbox("Record automatically during every run", &autoRecord)) settingsChanged = true;
+    wrapDisabled("Video frames are exactly 1/60 s of physics, so the movie plays at the right speed.");
+    if (settingsChanged) saveDataSettings();
+}
+
 
 // ====================================================================== dialogs
 void App::drawWelcome() {
-    ImGui::OpenPopup("Welcome to Vibration Lab Suite");
+    ImGui::OpenPopup("Welcome to VL Lab Mechanics Suite");
     ImVec2 c = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(620, 0), ImGuiCond_Appearing);
-    if (ImGui::BeginPopupModal("Welcome to Vibration Lab Suite", &showWelcome, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (ImGui::BeginPopupModal("Welcome to VL Lab Mechanics Suite", &showWelcome, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextWrapped("Build a mechanical system, run it for as long as you like, then take every number to Excel with charts already made.");
         ImGui::Spacing();
         ImGui::Separator();
@@ -758,11 +1235,11 @@ void App::drawWelcome() {
 }
 
 void App::drawAbout() {
-    ImGui::OpenPopup("About Vibration Lab Suite");
+    ImGui::OpenPopup("About VL Lab Mechanics Suite");
     ImVec2 c = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    if (ImGui::BeginPopupModal("About Vibration Lab Suite", &showAbout, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Vibration Lab Suite  1.0");
+    if (ImGui::BeginPopupModal("About VL Lab Mechanics Suite", &showAbout, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("VL Lab Mechanics Suite  1.2");
         ImGui::TextDisabled("A dynamics and vibrations sandbox by Team NOVA");
         ImGui::Separator();
         ImGui::PushTextWrapPos(520);

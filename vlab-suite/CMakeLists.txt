@@ -19,6 +19,8 @@ add_library(vlab_core STATIC
   core/src/model.cpp
   core/src/world.cpp
   core/src/deform.cpp
+  core/src/expr.cpp
+  core/src/section.cpp
   core/src/telemetry.cpp
   core/src/analysis.cpp
   core/src/project_io.cpp
