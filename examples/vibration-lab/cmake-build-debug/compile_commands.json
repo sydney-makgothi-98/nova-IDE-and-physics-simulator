@@ -1,0 +1,8 @@
+[
+{
+  "directory": "C:/Users/thabe/Desktop/Main PC content/In House Software/NOVA - C Interpreter/examples/vibration-lab/cmake-build-debug",
+  "command": "C:\\msys64\\mingw64\\bin\\g++.exe -DLAB_DIR=\"\\\"C:/Users/thabe/Desktop/Main PC content/In House Software/NOVA - C Interpreter/examples/vibration-lab\\\"\" -include C:/Users/thabe/AppData/Local/Temp/claude/71d0986410d49f4a/844514b6-7f63-4977-b22b-d45f38c82d08/scratchpad/nova_unbuf.h -g -std=gnu++17 -o CMakeFiles\\vibration_live.dir\\live.cpp.obj -c \"C:\\Users\\thabe\\Desktop\\Main PC content\\In House Software\\NOVA - C Interpreter\\examples\\vibration-lab\\live.cpp\"",
+  "file": "C:/Users/thabe/Desktop/Main PC content/In House Software/NOVA - C Interpreter/examples/vibration-lab/live.cpp",
+  "output": "C:/Users/thabe/Desktop/Main PC content/In House Software/NOVA - C Interpreter/examples/vibration-lab/cmake-build-debug/CMakeFiles/vibration_live.dir/live.cpp.obj"
+}
+]

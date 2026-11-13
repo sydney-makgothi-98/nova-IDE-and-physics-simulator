@@ -1,0 +1,8 @@
+# ninja log v7
+32	1569	8162170688645031	CMakeFiles/vibration_lab.dir/main.cpp.obj	9f1818d9407c14df
+1570	1796	8162170704020954	vibration_lab.exe	bf6a66a4b6b53f30
+25	258	8162266667439281	build.ninja	4bb41defa714e17
+25	258	8162266667326490	C:/Users/thabe/Desktop/Main PC content/In House Software/NOVA - C Interpreter/examples/vibration-lab/cmake-build-debug/cmake_install.cmake	4bb41defa714e17
+36	5862	8162200576713061	CMakeFiles/vibration_live.dir/live.cpp.obj	9a373eef4ced8691
+5403	6032	8162194946392910	vibration_live.exe	142020e31720576b
+58	704	8162266669332043	vibration_live.exe	596859f5b62cf87

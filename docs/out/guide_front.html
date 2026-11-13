@@ -1,0 +1,85 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Vibration Lab Suite: User Guide</title><style>
+* { box-sizing: border-box; }
+html { background: #fff; }
+body { font-family: 'Times New Roman', Times, serif; font-size: 12pt; line-height: 1.5; color: #000; margin: 0; text-align: justify; hyphens: auto; }
+p { margin: 0 0 0.55em 0; orphans: 3; widows: 3; }
+h1.chapter { page-break-before: always; break-before: page; margin: 0 0 1.2em 0; padding: 0 0 .35em 0; border-bottom: 3px double #000; text-align: left; line-height: 1.15; }
+h1.chapter .cn { display: block; font-size: 15pt; font-weight: normal; letter-spacing: .25em; text-transform: uppercase; margin-top: 1.2em; margin-bottom: .2em; }
+h1.chapter .ct { display: block; font-size: 28pt; font-weight: bold; }
+h2 { font-size: 17pt; margin: 1.4em 0 .4em 0; line-height: 1.2; page-break-after: avoid; break-after: avoid; text-align: left; border-bottom: 1px solid #000; padding-bottom: 2px; }
+h3 { font-size: 13.5pt; font-style: italic; margin: 1.1em 0 .3em 0; page-break-after: avoid; break-after: avoid; text-align: left; }
+ul, ol { margin: 0 0 .6em 0; padding-left: 1.6em; } li { margin-bottom: .15em; }
+code { font-family: 'Courier New', Courier, monospace; font-size: 10.5pt; border: .5px solid #888; padding: 0 2px; background: #f2f2f2; }
+.codewrap { margin: .5em 0 .8em 0; page-break-inside: avoid; break-inside: avoid; text-align: left; border: 1.2px solid #000; }
+.codewrap.breakable { page-break-inside: auto; break-inside: auto; }
+.code-t { font-size: 8.5pt; letter-spacing: .12em; text-transform: uppercase; font-weight: bold; background: #000; color: #fff; padding: 0 8px; line-height: 1.5; }
+pre.code { margin: 0; padding: 6px 10px; font-family: 'Courier New', Courier, monospace; font-size: 9.2pt; line-height: 1.28; white-space: pre-wrap; word-break: break-word; background: #f5f5f5; }
+pre.code code, .out pre code { border: 0; padding: 0; background: none; font-size: inherit; }
+.out { margin: -.55em 0 .9em 0; border: 1.2px solid #000; border-top: 0; page-break-inside: avoid; break-inside: avoid; text-align: left; }
+.out-t { font-size: 8pt; letter-spacing: .12em; font-weight: bold; padding: 0 8px; border-bottom: 1px dashed #000; background: #e4e4e4; line-height: 1.5; }
+.out pre { margin: 0; padding: 5px 10px; font-family: 'Courier New', Courier, monospace; font-size: 9.2pt; line-height: 1.25; white-space: pre-wrap; background: #fff; }
+figure { margin: 1em 0 1.1em 0; page-break-inside: avoid; break-inside: avoid; text-align: center; }
+.svgwrap, .imgwrap { border: 1px solid #000; padding: 6px; background: #fff; }
+.imgwrap img { width: 100%; display: block; }
+figcaption { font-size: 10.5pt; line-height: 1.3; margin-top: .35em; font-style: italic; text-align: center; }
+figcaption b { font-style: normal; }
+.co { margin: .8em 0 1em 0; padding: 6px 12px 4px 12px; border: 1.2px solid #000; text-align: left; page-break-inside: avoid; break-inside: avoid; font-size: 11.5pt; line-height: 1.42; }
+.co p:last-child, .co ul:last-child, .co ol:last-child { margin-bottom: .3em; }
+.co-t { font-size: 9pt; font-weight: bold; letter-spacing: .14em; margin-bottom: .2em; }
+.co-sub { letter-spacing: 0; font-size: 11.5pt; margin-left: .5em; font-style: italic; text-transform: none; }
+.co-why { border-left: 7px solid #000; background: #f7f7f7; }
+.co-whatif { border-style: dashed; border-width: 1.6px; border-left: 7px double #000; }
+.co-note, .co-def, .co-story { background: #fff; border-left: 4px solid #000; }
+.co-tip { background: #efefef; border-left: 4px solid #000; border-style: solid; }
+.co-warn { border: 2.4px solid #000; background: #fff; }
+.co-try { border: 1.2px solid #000; border-left: 7px solid #000; background: #fafafa; }
+.co-check { background: #efefef; border: 1.2px solid #000; border-left: 7px double #000; }
+.co-hint { border-style: dotted; }
+.co-assign { border: 1.6px solid #000; border-radius: 0; background: #f2f2f2; border-top: 6px solid #000; }
+.co-big { border: 3px double #000; border-top: 8px solid #000; background: #f2f2f2; page-break-inside: auto; break-inside: auto; }
+.co-quiz { border: 1.6px solid #000; background: #fff; border-top: 6px double #000; page-break-inside: auto; break-inside: auto; }
+.co-answers { border: 1.6px dashed #000; background: #fafafa; page-break-inside: auto; break-inside: auto; }
+.co-big .co-t, .co-assign .co-t, .co-quiz .co-t { font-size: 10pt; }
+table { border-collapse: collapse; width: 100%; margin: .6em 0 1em 0; font-size: 10.5pt; line-height: 1.3; text-align: left; page-break-inside: auto; }
+th { background: #000; color: #fff; padding: 4px 7px; border: 1px solid #000; font-size: 10pt; }
+td { padding: 4px 7px; border: 1px solid #000; vertical-align: top; }
+tr { page-break-inside: avoid; break-inside: avoid; }
+tr:nth-child(even) td { background: #f2f2f2; }
+.part { page-break-before: always; break-before: page; page-break-after: always; break-after: page; height: 235mm; display: flex; align-items: center; justify-content: center; text-align: center; }
+.part-inner { font-size: 30pt; font-weight: bold; line-height: 1.3; border-top: 4px solid #000; border-bottom: 4px solid #000; padding: 40px 30px; letter-spacing: .02em; }
+.pb { page-break-after: always; break-after: page; }
+hr { border: 0; border-top: 1px solid #000; margin: 1em 0; }
+blockquote { margin: .6em 1.5em; padding-left: 1em; border-left: 3px solid #000; font-style: italic; }
+.toc h1 { font-size: 26pt; border-bottom: 3px double #000; margin: 0 0 .5em 0; text-align: left; }
+.toc .row { display: flex; align-items: baseline; text-align: left; line-height: 1.38; }
+.toc .row .dots { flex: 1; border-bottom: 1px dotted #000; margin: 0 6px; transform: translateY(-3px); }
+.toc .l0 { font-weight: bold; font-size: 12.5pt; margin-top: .7em; text-transform: uppercase; letter-spacing: .05em; }
+.toc .l1 { font-size: 11.5pt; font-weight: bold; margin-top: .25em; }
+.toc .l2 { font-size: 10pt; padding-left: 1.8em; }
+
+.eq { text-align: center; font-style: italic; font-size: 12.5pt; margin: .55em 1em .75em 1em; padding: 4px 0; border-top: .6px solid #888; border-bottom: .6px solid #888; page-break-inside: avoid; }
+.eq .tag { float: right; font-style: normal; font-size: 10pt; }
+pre.code.src { font-size: 7.9pt; line-height: 1.24; }
+.co-mapx { border: 1.4px solid #000; border-left: 7px solid #000; background: #f7f7f7; }
+td code, li code, p code { font-size: 9.6pt; }
+.legend td { font-size: 10pt; }
+</style></head><body>
+<div style="height:236mm;display:flex;flex-direction:column;justify-content:space-between;text-align:center;">
+  <div style="border-top:6px solid #000;border-bottom:2px solid #000;padding:10px 0;font-size:11pt;letter-spacing:.4em;text-transform:uppercase;">User Guide</div>
+  <div>
+    <div style="display:flex;justify-content:center;margin-bottom:26px"><svg viewBox="0 0 220 120" width="330" height="180"><rect x="2" y="2" width="216" height="116" rx="12" fill="#fff" stroke="#000" stroke-width="4"/><line x1="14" y1="30" x2="14" y2="92" stroke="#000" stroke-width="6"/><polyline points="14,61 30,61 36,45 48,77 60,45 72,77 84,45 90,61 104,61" fill="none" stroke="#000" stroke-width="4"/><rect x="104" y="38" width="46" height="46" fill="#bbb" stroke="#000" stroke-width="4"/><polyline points="150,61 164,61 170,45 182,77 194,45 200,61 206,61" fill="none" stroke="#000" stroke-width="4"/><line x1="206" y1="30" x2="206" y2="92" stroke="#000" stroke-width="6"/></svg></div>
+    <div style="font-size:50pt;font-weight:bold;line-height:1.05;letter-spacing:.02em">VIBRATION<br>LAB SUITE</div>
+    <div style="border-top:2px solid #000;width:60%;margin:28px auto 22px auto"></div>
+    <div style="font-size:14.5pt;font-style:italic;line-height:1.45;padding:0 30px">Design a mechanical system, choose ideal or realistic physics, run it for as long as you like, and take every number to Excel with the charts already drawn.</div>
+  </div>
+  <div>
+    <div style="font-size:22pt;letter-spacing:.2em;text-transform:uppercase;font-weight:bold">by Team NOVA</div>
+    <div style="margin-top:10px;font-size:11pt;font-style:italic">Version 1.0 · 2026</div>
+    <div style="border-top:2px solid #000;border-bottom:6px solid #000;margin-top:18px;padding:6px 0;font-size:9pt;letter-spacing:.08em;text-transform:uppercase">Springs · dampers · friction · collisions · energy ledger · Excel export · video</div>
+  </div>
+</div><div style="page-break-before:always;height:232mm;display:flex;flex-direction:column;justify-content:flex-end;text-align:left;font-size:11pt;line-height:1.5">
+<p><b>Vibration Lab Suite: User Guide</b><br>by Team NOVA</p>
+<p>Version 1.0, 2026.</p>
+<p>All screenshots were taken from the real program. Charts shown from Excel were exported by Microsoft Excel from workbooks that the program created. Every number quoted from the validation suite was produced by running it.</p>
+<p>Excel and Windows are trademarks of Microsoft. Unreal Engine is a trademark of Epic Games. Other names belong to their owners.</p>
+<p>Set in Times New Roman, 12 point, with 1.5 line spacing.</p></div><div style="page-break-before:always"></div><div class="toc"><h1>Contents</h1><div class="row l1"><span>Welcome</span><span class="dots"></span><span>1</span></div><div class="row l2"><span>What Vibration Lab Suite does</span><span class="dots"></span><span>1</span></div><div class="row l2"><span>Installing</span><span class="dots"></span><span>1</span></div><div class="row l2"><span>The five-minute tour</span><span class="dots"></span><span>2</span></div><div class="row l2"><span>Your first run in one minute</span><span class="dots"></span><span>3</span></div><div class="row l1"><span>Chapter 1.  Designing a System</span><span class="dots"></span><span>4</span></div><div class="row l2"><span>1.1  The tools</span><span class="dots"></span><span>4</span></div><div class="row l2"><span>1.2  Sizes and radii</span><span class="dots"></span><span>6</span></div><div class="row l2"><span>1.3  Floors and their friction</span><span class="dots"></span><span>6</span></div><div class="row l2"><span>1.4  Beams and supports</span><span class="dots"></span><span>7</span></div><div class="row l2"><span>1.5  Springs, dampers, rods and pins</span><span class="dots"></span><span>8</span></div><div class="row l2"><span>1.6  Properties of a moving body</span><span class="dots"></span><span>9</span></div><div class="row l2"><span>1.7  Materials</span><span class="dots"></span><span>9</span></div><div class="row l2"><span>1.8  Undo, save, open</span><span class="dots"></span><span>10</span></div><div class="row l1"><span>Chapter 2.  Ideal and Realistic Physics</span><span class="dots"></span><span>11</span></div><div class="row l2"><span>2.1  What changes when you switch</span><span class="dots"></span><span>11</span></div><div class="row l2"><span>2.2  The energy ledger</span><span class="dots"></span><span>12</span></div><div class="row l1"><span>Chapter 3.  Running the Model</span><span class="dots"></span><span>13</span></div><div class="row l2"><span>3.1  How long to run</span><span class="dots"></span><span>13</span></div><div class="row l2"><span>3.2  Two ways to run</span><span class="dots"></span><span>13</span></div><div class="row l2"><span>3.3  Changing things while it runs</span><span class="dots"></span><span>14</span></div><div class="row l2"><span>3.4  Recording a video</span><span class="dots"></span><span>14</span></div><div class="row l1"><span>Chapter 4.  Telemetry and Excel</span><span class="dots"></span><span>15</span></div><div class="row l2"><span>4.1  What is recorded</span><span class="dots"></span><span>15</span></div><div class="row l2"><span>4.2  In the program</span><span class="dots"></span><span>15</span></div><div class="row l2"><span>4.3  Exporting to Excel</span><span class="dots"></span><span>16</span></div><div class="row l1"><span>Chapter 5.  Worked Tutorials</span><span class="dots"></span><span>19</span></div><div class="row l2"><span>5.1  1. Natural frequency and damping of a mass on a spring</span><span class="dots"></span><span>19</span></div><div class="row l2"><span>5.2  2. Resonance</span><span class="dots"></span><span>19</span></div><div class="row l2"><span>5.3  3. Which blocks slide?</span><span class="dots"></span><span>19</span></div><div class="row l2"><span>5.4  4. Bounce and restitution</span><span class="dots"></span><span>19</span></div><div class="row l2"><span>5.5  5. A tuned mass damper</span><span class="dots"></span><span>20</span></div><div class="row l1"><span>Chapter 6.  Analysis Tools</span><span class="dots"></span><span>21</span></div><div class="row l2"><span>6.1  Spectrum</span><span class="dots"></span><span>21</span></div><div class="row l2"><span>6.2  Modal analysis</span><span class="dots"></span><span>21</span></div><div class="row l2"><span>6.3  Frequency response</span><span class="dots"></span><span>22</span></div><div class="row l1"><span>Chapter 7.  How Accurate Is It?</span><span class="dots"></span><span>23</span></div><div class="row l2"><span>7.1  Honest limits</span><span class="dots"></span><span>24</span></div><div class="row l1"><span>Chapter 8.  Troubleshooting and Questions</span><span class="dots"></span><span>25</span></div><div class="row l1"><span>Chapter 9.  Reference</span><span class="dots"></span><span>26</span></div><div class="row l2"><span>9.1  Keys and mouse</span><span class="dots"></span><span>26</span></div><div class="row l2"><span>9.2  Conventions</span><span class="dots"></span><span>26</span></div><div class="row l2"><span>9.3  The Excel channels</span><span class="dots"></span><span>26</span></div><div class="row l2"><span>9.4  Command line</span><span class="dots"></span><span>27</span></div><div class="row l2"><span>9.5  The Unreal Engine plugin</span><span class="dots"></span><span>27</span></div></div></body></html>

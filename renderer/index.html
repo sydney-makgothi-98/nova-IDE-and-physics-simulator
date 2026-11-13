@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NOVA IDE</title>
+<link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div id="app">
+  <!-- Title bar / main toolbar -->
+  <header id="titlebar">
+    <div class="tb-left">
+      <div class="logo" title="NOVA IDE"><svg viewBox="0 0 24 24" width="22" height="22"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7c5cff"/><stop offset="1" stop-color="#21d789"/></linearGradient></defs><rect x="1" y="1" width="22" height="22" rx="6" fill="url(#lg)"/><path d="M7 17V7l10 10V7" fill="none" stroke="#0e0f12" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <button class="chip" id="projectChip"><span id="projectName">No project</span><i data-i="chev"></i></button>
+      <button class="chip" id="branchChip" hidden><i data-i="branch"></i><span id="branchName"></span></button>
+    </div>
+    <div class="tb-center">
+      <div class="runbar">
+        <button class="chip" id="configChip"><i data-i="cfg"></i><span id="configName">Current File</span><i data-i="chev"></i></button>
+        <button class="ib run" id="btnRun" title="Run (Shift+F10)"><i data-i="play"></i></button>
+        <button class="ib" id="btnDebug" title="Debug (Shift+F9)"><i data-i="bug"></i></button>
+        <button class="ib" id="btnBuild" title="Build (Ctrl+F9)"><i data-i="hammer"></i></button>
+        <button class="ib" id="btnStop" title="Stop (Ctrl+F2)" disabled><i data-i="stop"></i></button>
+      </div>
+    </div>
+    <div class="tb-right">
+      <button class="ib" id="btnSearch" title="Search Everywhere (double Shift)"><i data-i="search"></i></button>
+      <button class="ib" id="btnSettings" title="Settings (Ctrl+Alt+S)"><i data-i="gear"></i></button>
+    </div>
+  </header>
+
+  <div id="workspace">
+    <!-- Left stripe -->
+    <nav class="stripe" id="stripeLeft">
+      <button class="sb active" data-panel="project" title="Project (Alt+1)"><i data-i="folder"></i></button>
+      <button class="sb" data-panel="structure" title="Structure (Alt+7)"><i data-i="struct"></i></button>
+      <div class="spacer"></div>
+      <button class="sb" data-bottom="run" title="Run (Alt+4)"><i data-i="play"></i></button>
+      <button class="sb" data-bottom="debug" title="Debug (Alt+5)"><i data-i="bug"></i></button>
+      <button class="sb" data-bottom="problems" title="Problems (Alt+6)"><i data-i="warn"></i><b class="badge" id="problemBadge" hidden></b></button>
+      <button class="sb" data-bottom="find" title="Find (Ctrl+Shift+F)"><i data-i="search"></i></button>
+      <button class="sb" data-bottom="terminal" title="Terminal (Alt+F12)"><i data-i="term"></i></button>
+    </nav>
+
+    <aside id="sidebar">
+      <div class="panel-head"><span id="sidebarTitle">Project</span>
+        <span class="head-actions">
+          <button class="ib sm" id="btnNewFile" title="New File"><i data-i="newfile"></i></button>
+          <button class="ib sm" id="btnCollapse" title="Collapse All"><i data-i="collapse"></i></button>
+          <button class="ib sm" id="btnRefresh" title="Refresh"><i data-i="refresh"></i></button>
+        </span></div>
+      <div id="tree" class="scroll"></div>
+      <div id="structure" class="scroll" hidden></div>
+    </aside>
+    <div class="splitter v" id="splitSide"></div>
+
+    <main id="center">
+      <div id="tabs"></div>
+      <div id="crumbs"></div>
+      <div id="editorWrap">
+        <div id="editor"></div>
+        <div id="welcome">
+          <div class="w-card">
+            <div class="w-logo"><svg viewBox="0 0 24 24" width="64" height="64"><rect x="1" y="1" width="22" height="22" rx="6" fill="url(#lg)"/><path d="M7 17V7l10 10V7" fill="none" stroke="#0e0f12" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+            <h1>NOVA IDE</h1>
+            <p>A fast, free C &amp; C++ IDE built in-house.</p>
+            <div class="w-actions">
+              <button class="btn primary" id="wNew"><i data-i="plus"></i>New Project</button>
+              <button class="btn" id="wOpen"><i data-i="folder"></i>Open Folder</button>
+            </div>
+            <div class="w-recent" id="recentList"></div>
+            <div class="w-keys">
+              <span><kbd>Shift</kbd><kbd>Shift</kbd> Search Everywhere</span>
+              <span><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>A</kbd> Actions</span>
+              <span><kbd>Shift</kbd><kbd>F10</kbd> Run</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div class="splitter h" id="splitBottom" hidden></div>
+  <section id="bottom" hidden>
+    <div class="bottom-head">
+      <div class="btabs" id="btabs">
+        <button data-bottom="run">Run</button>
+        <button data-bottom="debug">Debug</button>
+        <button data-bottom="problems">Problems</button>
+        <button data-bottom="find">Find</button>
+        <button data-bottom="terminal">Terminal</button>
+      </div>
+      <span class="head-actions">
+        <button class="ib sm" id="btnRerun" title="Rerun"><i data-i="refresh"></i></button>
+        <button class="ib sm" id="btnClear" title="Clear"><i data-i="trash"></i></button>
+        <button class="ib sm" id="btnHide" title="Hide"><i data-i="minus"></i></button>
+      </span>
+    </div>
+    <div class="bpanes">
+      <div class="bpane" id="pane-run">
+        <div class="out scroll" id="runOut"></div>
+        <div class="stdin"><span>&gt;</span><input id="runIn" placeholder="Send input to the running program and press Enter" spellcheck="false" /></div>
+      </div>
+      <div class="bpane" id="pane-problems"><div class="scroll list" id="problemList"></div></div>
+      <div class="bpane" id="pane-find">
+        <div class="find-bar">
+          <input id="findQ" placeholder="Find in files…" spellcheck="false" />
+          <label class="tog" title="Match case"><input type="checkbox" id="findCase" /><span>Aa</span></label>
+          <label class="tog" title="Whole word"><input type="checkbox" id="findWord" /><span>W</span></label>
+          <label class="tog" title="Regex"><input type="checkbox" id="findRe" /><span>.*</span></label>
+          <button class="btn sm primary" id="findGo">Find</button>
+          <span class="muted" id="findCount"></span>
+        </div>
+        <div class="scroll list" id="findList"></div>
+      </div>
+      <div class="bpane" id="pane-terminal"><div id="xterm"></div></div>
+      <div class="bpane" id="pane-debug">
+        <div class="dbg-bar" id="dbgBar">
+          <button class="ib sm" data-d="resume" title="Resume (F9)" style="color:var(--ok)"><i data-i="play"></i></button>
+          <button class="ib sm" data-d="over" title="Step Over (F8)"><i data-i="over"></i></button>
+          <button class="ib sm" data-d="into" title="Step Into (F7)"><i data-i="into"></i></button>
+          <button class="ib sm" data-d="out" title="Step Out (Shift+F8)"><i data-i="outof"></i></button>
+          <button class="ib sm" data-d="cursor" title="Run to Cursor (Alt+F9)"><i data-i="cursor"></i></button>
+          <button class="ib sm" data-d="stop" title="Stop debugging" style="color:var(--err)"><i data-i="stop"></i></button>
+          <span class="dstate" id="dbgState">Not debugging</span>
+        </div>
+        <div class="dbg-cols">
+          <div class="dbg-col"><h5>Frames</h5><div class="scroll list" id="dbgFrames"></div></div>
+          <div class="dbg-col"><h5>Variables</h5><div class="scroll list" id="dbgVars"></div>
+            <h5>Watches <button class="ib sm" id="dbgAddWatch" title="Add watch"><i data-i="plus"></i></button></h5><div class="scroll list" id="dbgWatch" style="flex:.6"></div></div>
+          <div class="dbg-col"><h5>Console</h5><div class="out scroll" id="dbgOut"></div>
+            <div class="stdin"><span>(gdb)</span><input id="dbgIn" placeholder="gdb command, e.g. print arr[2], bt, info registers" spellcheck="false" /></div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer id="status">
+    <div class="st-left"><span id="stBuild">Ready</span></div>
+    <div class="st-right">
+      <span id="stLsp" class="st-item" hidden></span>
+      <span id="stToolchain" class="st-item" title="Toolchain"></span>
+      <span id="stPos" class="st-item">1:1</span>
+      <span class="st-item">UTF-8</span>
+      <span id="stLang" class="st-item">Plain Text</span>
+    </div>
+  </footer>
+</div>
+
+<!-- Overlays -->
+<div id="overlay" hidden></div>
+<div id="menu" hidden></div>
+<div id="toasts"></div>
+
+<script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
+<script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+<script src="../node_modules/monaco-editor/min/vs/loader.js"></script>
+<script src="icons.js"></script>
+<script src="lsp.js"></script>
+<script src="debug.js"></script>
+<script src="terminal.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

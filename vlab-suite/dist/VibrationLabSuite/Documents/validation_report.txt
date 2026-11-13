@@ -1,0 +1,85 @@
+Vibration Lab Suite 1.1 - validation report
+Generated 2026-11-13 01:54
+======================================================================
+
+Vibration Lab Suite: validation suite
+
+Shapes and mass properties
+  [PASS] box inertia I/m = (w^2+h^2)/12                 0.416667 vs 0.416667
+  [PASS] circle area and I/m = r^2/2                    area 0.785398
+  [PASS] regular hexagon area = 3 sqrt(3)/2 r^2         2.598076 vs 2.598076
+  [PASS] wedge area = w h / 2, centred on its centroid  area 3.000000
+  [PASS] mass override, inertia = m (w^2+h^2)/12        0.666667
+Smooth systems (springs, dampers, rails)
+  [PASS] 1-DOF uses the RK4 path                        constraint solver off
+  [PASS] 1-DOF matches the exact solution               worst gap 8.03e-13 m over 10 s
+  [PASS] 1-DOF energy ledger closes                     numerical error 2.23e-10 J
+  [PASS] driven 2-DOF energy ledger closes              worst error 5.98e-07 J over 20 s (E to 1.4 J)
+  [PASS] frictionless spring pendulum conserves energy  E wandered 2.56e-12 J of 23.467 J
+  [PASS] rails: locked axis never moves                 sideways drift 0.0e+00 m
+  [PASS] suspension settles to static sag m g / k       tyre 0.2230 (0.2230)  susp 0.5606 (0.5606)
+Rod pendulum
+  [PASS] rod pendulum uses the constraint solver        yes
+  [PASS] pendulum period 2 pi sqrt(L/g)                 measured 2.8388 s, theory 2.8388 s
+  [PASS] pendulum energy bounded (ideal)                E wandered 5.31e-05 J
+Collisions, restitution and the energy ledger
+  [PASS] rubber ball rebounds to e^2 h                  first rebound 1.2810 m, theory 1.2800 m
+  [PASS] impact loss = m g h (1 - e^2) in the ledger    ledger 3.534 J, theory 3.532 J
+  [PASS] ledger closes through bounces and rest         numerical error 0.020 J (start 0.00 J)
+  [PASS] ball comes to rest on the floor                speed 0.0000, y 1.7500
+  [PASS] ideal ball bounces back to its drop height     rebound 2.0016 m of 2.0 m
+  [PASS] equal-mass elastic collision swaps velocities  cue 0.0000, target 4.0000 m/s
+  [PASS] momentum and energy conserved (e = 1)          p 4.0000 -> 4.0000, KE 8.000 -> 8.000
+  [PASS] collision with e = 0.5 loses (1 - e^2)/2 of the KE ledger 3.000 J, theory 3.000 J
+Friction on an incline
+  [PASS] rubber and steel blocks stay put (mu_s > tan)  slip 0.0000 m and 0.0000 m
+  [PASS] sliding block: a = g (sin - mu_k cos)          measured 1.574 m/s2, theory 1.574
+  [PASS] ideal (frictionless) incline: a = g sin(angle) measured 4.606, theory 4.606
+  [PASS] stopping distance v^2 / (2 mu g)               5.242 m vs 5.242 m
+  [PASS] friction heat = mu m g d in the ledger         36.004 J vs 36.000 J
+  [PASS] rolling disc: a = (2/3) g sin(angle)           measured 2.237, theory 2.237
+Beams, supports and line floors
+  [PASS] ball comes to rest ON a zero-thickness floor line y 1.7500 vs 1.7500
+  [PASS] an unsupported beam falls freely (y = g t^2 / 2) fell 4.9050 m vs 4.9050 m
+  [PASS] hinged beam period T = 2 pi sqrt(2L/3g)        2.3177 s vs 2.3164 s
+  [PASS] hinged beam: ideal energy ledger closes        numerical -0.00000 J
+  [PASS] simply supported beam: reactions sum to the weight 490.5 N vs 490.5 N
+  [PASS] symmetric load: both supports carry half       -245.3 N and -245.2 N
+  [PASS] cantilever holds: fixed support force = total weight 363.0 N vs 363.0 N
+  [PASS] cantilever moment = sum of weight x distance   863.3 N m vs 863.3 N m
+  [PASS] cantilever stays put (rigid, welded)           moved 0.0000 m
+Analysis
+  [PASS] modal: 1-DOF frequency sqrt(k/m)/2pi           0.61640 Hz vs 0.61640
+  [PASS] modal: 1-DOF damping ratio c/(2 sqrt(km))      0.09682 vs 0.09682
+  [PASS] modal: 2-DOF natural frequencies               1.0066, 1.5099 Hz vs 1.0066, 1.5099
+  [PASS] FFT finds the 2.5 Hz tone (offset removed)     peak 2.490 Hz
+  [PASS] log-decrement damping estimate                 0.0968 vs 0.0968
+  [PASS] telemetry spectrum peak = damped frequency     0.610 Hz vs 0.614
+  [PASS] frequency response matches |H(w)| = 1/sqrt((k-m w^2)^2+(c w)^2) 0.16937 m/N vs 0.17035
+Files, determinism and the example gallery
+  [PASS] save / load round trip                         6 bodies, 0 links
+  [PASS] a damaged file is refused, not crashed on      "This is not a Vibration Lab Suite file (missing 'vlab' header)."
+  [PASS] deterministic: two runs are bit-identical      6000 steps
+      Mass-spring-damper (1 degree of freedom)       numerical    0.0000 J  (dissipated   11.498, pos-correction   0.000, reversible contact exchange   0.000)
+      Two coupled masses                             numerical    0.0000 J  (dissipated    3.525, pos-correction   0.000, reversible contact exchange   0.000)
+      Tuned mass damper                              numerical    0.0000 J  (dissipated    0.216, pos-correction   0.000, reversible contact exchange   0.000)
+      Spring pendulum                                numerical    0.0000 J  (dissipated    6.857, pos-correction   0.000, reversible contact exchange   0.000)
+      Pendulum on a rod                              numerical   -0.0006 J  (dissipated    0.139, pos-correction   0.002, reversible contact exchange   0.000)
+      Quarter-car suspension                         numerical    0.0000 J  (dissipated   13.751, pos-correction   0.000, reversible contact exchange   0.000)
+      Bouncing ball: ideal vs realistic              numerical    0.0129 J  (dissipated    5.798, pos-correction   0.000, reversible contact exchange   0.000)
+      Friction on an incline: four materials         numerical    0.0190 J  (dissipated   31.091, pos-correction   0.000, reversible contact exchange   0.074)
+      Collision: two balls                           numerical    0.0000 J  (dissipated    0.000, pos-correction   0.000, reversible contact exchange   0.048)
+      Ball rolling down a ramp                       numerical   -0.0008 J  (dissipated    0.594, pos-correction   0.000, reversible contact exchange   0.021)
+      Impact of a block on a spring platform         numerical    0.0766 J  (dissipated   42.470, pos-correction   0.000, reversible contact exchange   0.019)
+      A beam with no support falls                   numerical    0.3086 J  (dissipated 5329.286, pos-correction   0.276, reversible contact exchange   7.546)
+      Beam hinged at one end                         numerical   -0.0900 J  (dissipated    0.000, pos-correction   0.051, reversible contact exchange   0.000)
+      Simply supported beam with a load              numerical    0.1044 J  (dissipated    0.109, pos-correction   0.004, reversible contact exchange  -1.623)
+      Cantilever with a tip load                     numerical   -0.0016 J  (dissipated    0.000, pos-correction   1.833, reversible contact exchange   0.000)
+      Spring-mass assembly                           numerical    0.0000 J  (dissipated    7.691, pos-correction   0.000, reversible contact exchange   0.000)
+      Gantry crane carrying a load                   numerical   -0.0014 J  (dissipated    0.000, pos-correction   0.449, reversible contact exchange   0.000)
+      Robotic arm (two joints)                       numerical    0.0091 J  (dissipated   12.759, pos-correction   0.004, reversible contact exchange   0.000)
+  [PASS] all gallery examples run 2 s without blowing up 18 examples 
+  [PASS] every example's energy ledger stays honest     worst relative error 0.0381 (Simply supported beam with a load)
+  [PASS] live edit: removing friction mid-run makes the block slide speed 4.832 m/s
+
+51 of 51 checks passed

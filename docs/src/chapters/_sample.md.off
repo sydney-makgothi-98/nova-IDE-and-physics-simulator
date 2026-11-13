@@ -1,0 +1,33 @@
+@@part Part I — Understanding IDEs
+
+# What Is an IDE?
+
+## A first look
+
+An **IDE** is a program that helps you write programs. This sentence is a test of *italic*, **bold** and `inline code`.
+
+{{fig:ide-vs-editor|An editor is the middle of the onion. An IDE wraps more tools around it.}}
+
+::: why Why does it matter?
+Because every layer saves you time. Without it you would do each step by hand.
+:::
+
+```c run
+#include <stdio.h>
+int main(void) {
+    printf("Hello, NOVA!\n");
+    return 0;
+}
+```
+
+| Word | Meaning |
+|------|---------|
+| IDE | Integrated Development Environment |
+| LSP | Language Server Protocol |
+
+{{img:shot-run.png|The NOVA window after pressing Run.}}
+
+::: quiz
+1. What does IDE stand for?
+2. Name two layers of an IDE.
+:::

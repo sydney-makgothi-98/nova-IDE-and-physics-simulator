@@ -1,0 +1,3 @@
+C:/Users/thabe/Desktop/Main PC content/In House Software/NOVA - C Interpreter/examples/vibration-lab/cmake-build-debug/CMakeFiles/vibration_live.dir
+C:/Users/thabe/Desktop/Main PC content/In House Software/NOVA - C Interpreter/examples/vibration-lab/cmake-build-debug/CMakeFiles/edit_cache.dir
+C:/Users/thabe/Desktop/Main PC content/In House Software/NOVA - C Interpreter/examples/vibration-lab/cmake-build-debug/CMakeFiles/rebuild_cache.dir

@@ -1,0 +1,967 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Vibration Lab Suite: User Guide</title><style>
+* { box-sizing: border-box; }
+html { background: #fff; }
+body { font-family: 'Times New Roman', Times, serif; font-size: 12pt; line-height: 1.5; color: #000; margin: 0; text-align: justify; hyphens: auto; }
+p { margin: 0 0 0.55em 0; orphans: 3; widows: 3; }
+h1.chapter { page-break-before: always; break-before: page; margin: 0 0 1.2em 0; padding: 0 0 .35em 0; border-bottom: 3px double #000; text-align: left; line-height: 1.15; }
+h1.chapter .cn { display: block; font-size: 15pt; font-weight: normal; letter-spacing: .25em; text-transform: uppercase; margin-top: 1.2em; margin-bottom: .2em; }
+h1.chapter .ct { display: block; font-size: 28pt; font-weight: bold; }
+h2 { font-size: 17pt; margin: 1.4em 0 .4em 0; line-height: 1.2; page-break-after: avoid; break-after: avoid; text-align: left; border-bottom: 1px solid #000; padding-bottom: 2px; }
+h3 { font-size: 13.5pt; font-style: italic; margin: 1.1em 0 .3em 0; page-break-after: avoid; break-after: avoid; text-align: left; }
+ul, ol { margin: 0 0 .6em 0; padding-left: 1.6em; } li { margin-bottom: .15em; }
+code { font-family: 'Courier New', Courier, monospace; font-size: 10.5pt; border: .5px solid #888; padding: 0 2px; background: #f2f2f2; }
+.codewrap { margin: .5em 0 .8em 0; page-break-inside: avoid; break-inside: avoid; text-align: left; border: 1.2px solid #000; }
+.codewrap.breakable { page-break-inside: auto; break-inside: auto; }
+.code-t { font-size: 8.5pt; letter-spacing: .12em; text-transform: uppercase; font-weight: bold; background: #000; color: #fff; padding: 0 8px; line-height: 1.5; }
+pre.code { margin: 0; padding: 6px 10px; font-family: 'Courier New', Courier, monospace; font-size: 9.2pt; line-height: 1.28; white-space: pre-wrap; word-break: break-word; background: #f5f5f5; }
+pre.code code, .out pre code { border: 0; padding: 0; background: none; font-size: inherit; }
+.out { margin: -.55em 0 .9em 0; border: 1.2px solid #000; border-top: 0; page-break-inside: avoid; break-inside: avoid; text-align: left; }
+.out-t { font-size: 8pt; letter-spacing: .12em; font-weight: bold; padding: 0 8px; border-bottom: 1px dashed #000; background: #e4e4e4; line-height: 1.5; }
+.out pre { margin: 0; padding: 5px 10px; font-family: 'Courier New', Courier, monospace; font-size: 9.2pt; line-height: 1.25; white-space: pre-wrap; background: #fff; }
+figure { margin: 1em 0 1.1em 0; page-break-inside: avoid; break-inside: avoid; text-align: center; }
+.svgwrap, .imgwrap { border: 1px solid #000; padding: 6px; background: #fff; }
+.imgwrap img { width: 100%; display: block; }
+figcaption { font-size: 10.5pt; line-height: 1.3; margin-top: .35em; font-style: italic; text-align: center; }
+figcaption b { font-style: normal; }
+.co { margin: .8em 0 1em 0; padding: 6px 12px 4px 12px; border: 1.2px solid #000; text-align: left; page-break-inside: avoid; break-inside: avoid; font-size: 11.5pt; line-height: 1.42; }
+.co p:last-child, .co ul:last-child, .co ol:last-child { margin-bottom: .3em; }
+.co-t { font-size: 9pt; font-weight: bold; letter-spacing: .14em; margin-bottom: .2em; }
+.co-sub { letter-spacing: 0; font-size: 11.5pt; margin-left: .5em; font-style: italic; text-transform: none; }
+.co-why { border-left: 7px solid #000; background: #f7f7f7; }
+.co-whatif { border-style: dashed; border-width: 1.6px; border-left: 7px double #000; }
+.co-note, .co-def, .co-story { background: #fff; border-left: 4px solid #000; }
+.co-tip { background: #efefef; border-left: 4px solid #000; border-style: solid; }
+.co-warn { border: 2.4px solid #000; background: #fff; }
+.co-try { border: 1.2px solid #000; border-left: 7px solid #000; background: #fafafa; }
+.co-check { background: #efefef; border: 1.2px solid #000; border-left: 7px double #000; }
+.co-hint { border-style: dotted; }
+.co-assign { border: 1.6px solid #000; border-radius: 0; background: #f2f2f2; border-top: 6px solid #000; }
+.co-big { border: 3px double #000; border-top: 8px solid #000; background: #f2f2f2; page-break-inside: auto; break-inside: auto; }
+.co-quiz { border: 1.6px solid #000; background: #fff; border-top: 6px double #000; page-break-inside: auto; break-inside: auto; }
+.co-answers { border: 1.6px dashed #000; background: #fafafa; page-break-inside: auto; break-inside: auto; }
+.co-big .co-t, .co-assign .co-t, .co-quiz .co-t { font-size: 10pt; }
+table { border-collapse: collapse; width: 100%; margin: .6em 0 1em 0; font-size: 10.5pt; line-height: 1.3; text-align: left; page-break-inside: auto; }
+th { background: #000; color: #fff; padding: 4px 7px; border: 1px solid #000; font-size: 10pt; }
+td { padding: 4px 7px; border: 1px solid #000; vertical-align: top; }
+tr { page-break-inside: avoid; break-inside: avoid; }
+tr:nth-child(even) td { background: #f2f2f2; }
+.part { page-break-before: always; break-before: page; page-break-after: always; break-after: page; height: 235mm; display: flex; align-items: center; justify-content: center; text-align: center; }
+.part-inner { font-size: 30pt; font-weight: bold; line-height: 1.3; border-top: 4px solid #000; border-bottom: 4px solid #000; padding: 40px 30px; letter-spacing: .02em; }
+.pb { page-break-after: always; break-after: page; }
+hr { border: 0; border-top: 1px solid #000; margin: 1em 0; }
+blockquote { margin: .6em 1.5em; padding-left: 1em; border-left: 3px solid #000; font-style: italic; }
+.toc h1 { font-size: 26pt; border-bottom: 3px double #000; margin: 0 0 .5em 0; text-align: left; }
+.toc .row { display: flex; align-items: baseline; text-align: left; line-height: 1.38; }
+.toc .row .dots { flex: 1; border-bottom: 1px dotted #000; margin: 0 6px; transform: translateY(-3px); }
+.toc .l0 { font-weight: bold; font-size: 12.5pt; margin-top: .7em; text-transform: uppercase; letter-spacing: .05em; }
+.toc .l1 { font-size: 11.5pt; font-weight: bold; margin-top: .25em; }
+.toc .l2 { font-size: 10pt; padding-left: 1.8em; }
+
+.eq { text-align: center; font-style: italic; font-size: 12.5pt; margin: .55em 1em .75em 1em; padding: 4px 0; border-top: .6px solid #888; border-bottom: .6px solid #888; page-break-inside: avoid; }
+.eq .tag { float: right; font-style: normal; font-size: 10pt; }
+pre.code.src { font-size: 7.9pt; line-height: 1.24; }
+.co-mapx { border: 1.4px solid #000; border-left: 7px solid #000; background: #f7f7f7; }
+td code, li code, p code { font-size: 9.6pt; }
+.legend td { font-size: 10pt; }
+</style></head><body><h1 class="chapter" id="c0"><span class="cn">&nbsp;</span><span class="ct">Welcome</span></h1>
+
+<h2 id="s1">What Vibration Lab Suite does</h2>
+
+<p><strong>Vibration Lab Suite</strong> is a sandbox for mechanical motion. You draw a system on a canvas: balls, blocks and polygons, floor lines and ramps with their own friction, beams with pinned, roller or cantilever supports, springs, dampers, rods and hinges with motors. You choose how realistic the physics should be. Then you run it for as long as you like and watch it move, with live numbers and plots beside it.</p>
+<p>When you are done, one button turns the whole run into an <strong>Excel workbook</strong>: every number, with units, plus charts that are already drawn. A second button records an <strong>.mp4 video</strong>.</p>
+<p>It is built for three kinds of people:</p>
+<ul>
+<li><strong>Students</strong> of dynamics and vibrations, who want to <em>see</em> what the equations say and check their homework against a simulation.</li>
+<li><strong>Engineers</strong> who want a quick what-if model before they commit to heavy software.</li>
+<li><strong>Teachers and developers</strong> who want convincing, correct motion for demonstrations, courses and games.</li>
+</ul>
+<h2 id="s2">Installing</h2>
+
+<p>There is nothing to install. Double-click <strong>VibrationLabSuite.exe</strong>. The program opens straight into the design screen with a worked example loaded.</p>
+<div class="co co-note"><div class="co-t">NOTE</div><p>You need Windows 10 or 11 (64-bit) and a graphics card that supports Direct3D 11 (every PC of the last ten years does). Excel is <strong>not</strong> needed to run the program or to create the workbook. You only need Excel (or LibreOffice, Google Sheets, Numbers) to <em>open</em> the workbook afterwards.</p></div>
+<p>Your files are kept in <code>Documents\Vibration Lab Suite\</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Folder</th>
+<th>What goes there</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Designs</code></td>
+<td>Systems you save (<code>.vlab</code> files)</td>
+</tr>
+<tr>
+<td><code>Exports</code></td>
+<td>Excel workbooks and CSV files</td>
+</tr>
+<tr>
+<td><code>Recordings</code></td>
+<td>Videos</td>
+</tr>
+</tbody>
+</table>
+<h2 id="s3">The five-minute tour</h2>
+
+<figure><div class="imgwrap"><img src="file:///C:/Users/thabe/Desktop/Main PC content/In House Software/NOVA - C Interpreter/docs/img/suite-welcome.png"/></div><figcaption><b>Figure 0.1.</b> The first time you start the program it explains itself. You can reopen this window any time from Help, Quick start.</figcaption></figure>
+
+<p>The screen is divided into panels that you can drag, resize and rearrange.</p>
+<figure><div class="imgwrap"><img src="file:///C:/Users/thabe/Desktop/Main PC content/In House Software/NOVA - C Interpreter/docs/img/suite-design.png"/></div><figcaption><b>Figure 0.2.</b> The design screen. Library (left): shapes and tools. Simulation (centre): the canvas. Run (right, top): how long, run, export. Properties and Environment (right, bottom). Telemetry (bottom): plots and analysis.</figcaption></figure>
+
+<table>
+<thead>
+<tr>
+<th>Panel</th>
+<th>What it is for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Library</strong></td>
+<td>Pick a shape or connection, then click the canvas. Also holds the settings for the next object and the example list.</td>
+</tr>
+<tr>
+<td><strong>Simulation</strong></td>
+<td>The canvas. Wheel zooms, right-drag pans. In a run, drag a moving body to push it.</td>
+</tr>
+<tr>
+<td><strong>Run</strong></td>
+<td>Type how many seconds to run, press Run, then export.</td>
+</tr>
+<tr>
+<td><strong>Properties</strong></td>
+<td>Everything about the selected body or connection: size, radius, mass, material, friction, starting motion, stiffness, damping.</td>
+</tr>
+<tr>
+<td><strong>Environment</strong></td>
+<td>Ideal or Realistic physics, each effect on or off, gravity.</td>
+</tr>
+<tr>
+<td><strong>Telemetry</strong></td>
+<td>Plots, the energy ledger, paths, spectrum, statistics, modal analysis and frequency response.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="s4">Your first run in one minute</h2>
+
+<ol>
+<li>Look at the example already loaded: a mass joined to a wall by a spring and a damper. The spring is stretched by 1 metre.</li>
+<li>In the <strong>Run</strong> panel press <strong>Run</strong>. The mass swings back and forth and settles.</li>
+<li>Open the <strong>Telemetry</strong> panel. Tick a few channels (try <strong>dx</strong> and <strong>vx</strong>) and watch them draw themselves.</li>
+<li>Press <strong>Export to Excel (.xlsx) with charts</strong>. Choose where to save it. Open the file in Excel: the Charts sheet shows the run.</li>
+</ol>
+<div class="co co-try"><div class="co-t">TRY IT</div><p>Change the number in "How long should the model run?" to 30, press <strong>Compute the whole run now (fast)</strong>, and export again. The workbook now holds thirty seconds of data and an extra "first 10 seconds" chart so the early oscillation is not squashed.</p></div>
+<h1 class="chapter" id="c5"><span class="cn">Chapter 1</span><span class="ct">Designing a System</span></h1>
+
+<h2 id="s6">1.1  The tools</h2>
+
+<p>The <strong>Library</strong> on the left is a navbar. Click <strong>Objects</strong>, <strong>Ground and supports</strong>, <strong>Connections</strong> or <strong>Examples</strong> and a drop-down list opens beside it. Pick an item, then click the canvas to place it. A tool places <strong>one</strong> thing and then returns to Select, so things you already placed stay selectable; hold <strong>Shift</strong> while clicking to keep placing. <strong>Esc</strong> cancels.</p>
+<table>
+<thead>
+<tr>
+<th>Menu</th>
+<th>Tool</th>
+<th>Key</th>
+<th>What it makes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Objects</td>
+<td>Ball</td>
+<td>C</td>
+<td>A circle. You choose its radius.</td>
+</tr>
+<tr>
+<td>Objects</td>
+<td>Block</td>
+<td>B</td>
+<td>A rectangle. You choose its width and height.</td>
+</tr>
+<tr>
+<td>Objects</td>
+<td>Polygon</td>
+<td>P</td>
+<td>A regular polygon with 3 to 12 sides.</td>
+</tr>
+<tr>
+<td>Objects</td>
+<td>Wedge</td>
+<td>W</td>
+<td>A right-angled triangle.</td>
+</tr>
+<tr>
+<td>Objects</td>
+<td>Beam</td>
+<td>T</td>
+<td>A rigid beam with a length and a thickness. It <strong>falls</strong> unless it is supported or hinged.</td>
+</tr>
+<tr>
+<td>Ground and supports</td>
+<td>Floor line</td>
+<td>F</td>
+<td>A hatched line of <strong>zero thickness</strong> with a material (friction, bounce). Rotate it for a ramp or a wall.</td>
+</tr>
+<tr>
+<td>Ground and supports</td>
+<td>Anchor point</td>
+<td>A</td>
+<td>A fixed point to hang springs, dampers and rods from.</td>
+</tr>
+<tr>
+<td>Ground and supports</td>
+<td>Pin support</td>
+<td>1</td>
+<td>Pins a beam to the ground: it can turn but not move.</td>
+</tr>
+<tr>
+<td>Ground and supports</td>
+<td>Fixed support</td>
+<td>2</td>
+<td>A cantilever: the beam can neither move nor turn.</td>
+</tr>
+<tr>
+<td>Ground and supports</td>
+<td>Roller support</td>
+<td>3</td>
+<td>Holds the beam up but lets it slide along the support's axis.</td>
+</tr>
+<tr>
+<td>Connections</td>
+<td>Spring, Damper</td>
+<td>S, D</td>
+<td>Click one body, then another.</td>
+</tr>
+<tr>
+<td>Connections</td>
+<td>Rigid rod</td>
+<td>R</td>
+<td>A bar of fixed length.</td>
+</tr>
+<tr>
+<td>Connections</td>
+<td>Pin joint</td>
+<td>J</td>
+<td>A hinge between two bodies. It can carry a motor.</td>
+</tr>
+<tr>
+<td>Connections</td>
+<td>Fixed (weld) joint</td>
+<td></td>
+<td>Glues two bodies together, angle included.</td>
+</tr>
+<tr>
+<td></td>
+<td>Select / move</td>
+<td>V</td>
+<td>Click to select, drag to move. During a run, drag to push.</td>
+</tr>
+</tbody>
+</table>
+<figure><div class="imgwrap"><img src="file:///C:/Users/thabe/Desktop/Main PC content/In House Software/NOVA - C Interpreter/docs/img/suite-navbar.png"/></div><figcaption><b>Figure 1.1.</b> The Library navbar with the Examples drop-down open: Basic, Intermediate and Complex lists.</figcaption></figure>
+
+<h3>Turning an object before you place it</h3>
+
+<p>While a placement tool is active, a ghost follows the cursor. Press <strong>Q</strong> or <strong>E</strong> (or hold <strong>Ctrl</strong> and turn the mouse wheel) to rotate it in steps before you click, or type an angle in <strong>Rotation</strong> in the Library. The same rotation is used for floors (ramps and walls), beams and the direction of a roller support.</p>
+<figure><div class="imgwrap"><img src="file:///C:/Users/thabe/Desktop/Main PC content/In House Software/NOVA - C Interpreter/docs/img/suite-ghost.png"/></div><figcaption><b>Figure 1.2.</b> A block ghost turned 30 degrees with Q / E before it is placed. The simply supported beam below has a pin support (left) and a roller support (right).</figcaption></figure>
+
+<p>Before you click, the <strong>Settings for the next one</strong> block lets you choose the size, radius, mass and material. Things snap to a grid (0.1 m by default; hold <strong>Alt</strong> to ignore it).</p>
+<h2 id="s7">1.2  Sizes and radii</h2>
+
+<p>Everything is measured in metres, kilograms and seconds. After placing something, select it and type exact numbers in <strong>Properties</strong>:</p>
+<ul>
+<li>a <strong>ball</strong> has a radius;</li>
+<li>a <strong>block</strong> has a width and a height;</li>
+<li>a <strong>polygon</strong> has a number of sides and a radius (the distance from its centre to a corner);</li>
+<li>a <strong>wedge</strong> has two leg lengths;</li>
+<li>a <strong>beam</strong> has a length and a thickness, and its mass comes from the material's density;</li>
+<li>a <strong>floor</strong> is a line: it has only a length and an angle.</li>
+</ul>
+<p>Mass can be typed directly (kilograms) or worked out from a <strong>density</strong> and the shape's area. The computed mass and moment of inertia are shown underneath.</p>
+<div class="co co-def"><div class="co-t">KEY WORD</div><p><strong>Depth.</strong> This is a 2-D simulator. Every body is treated as 1 metre deep, so "density x area" gives its mass. If you only ever type the mass directly, depth never matters.</p></div>
+<h2 id="s8">1.3  Floors and their friction</h2>
+
+<p>A floor is a <strong>line with hatching on the side it supports and no thickness</strong>: it is ground, not an object, so it can never be hinged, bent or knocked over. It has a material, and therefore friction and bounce. Place one, then select it: Properties shows its length, angle and <strong>surface material</strong>. The material sets its friction and bounciness. Give each floor its own material to compare surfaces: for example, put an ice floor and a rubber floor side by side and slide the same block across both.</p>
+<figure><div class="imgwrap"><img src="file:///C:/Users/thabe/Desktop/Main PC content/In House Software/NOVA - C Interpreter/docs/img/suite-incline.png"/></div><figcaption><b>Figure 1.3.</b> A wooden ramp tilted 28 degrees with four blocks of different materials. After six seconds, rubber and steel have not moved; wood and ice have slid down to the wall. The red dots are contact points.</figcaption></figure>
+
+<h2 id="s9">1.4  Beams and supports</h2>
+
+<p>A <strong>beam</strong> is a heavy rigid body. Drop it with nothing under it and it falls. To hold it up, choose a support and click the beam: the support snaps to the beam's ends, the middle of its edges and its centre.</p>
+<table>
+<thead>
+<tr>
+<th>Support</th>
+<th>Holds</th>
+<th>Reaction shown</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Pin</td>
+<td>Position. The beam may rotate.</td>
+<td>A force (x and y).</td>
+</tr>
+<tr>
+<td>Roller</td>
+<td>One direction only (up, for a flat roller). The beam may slide and rotate.</td>
+<td>A force perpendicular to the roller's axis.</td>
+</tr>
+<tr>
+<td>Fixed (cantilever)</td>
+<td>Position <strong>and</strong> angle.</td>
+<td>A force and a <strong>moment</strong>.</td>
+</tr>
+</tbody>
+</table>
+<p>While the model runs, click a support symbol and Properties shows the reaction force (and moment, for a fixed support); an orange arrow is drawn at the support. Try the examples <strong>Simply supported beam</strong> (the two reactions share the load) and <strong>Cantilever with a tip load</strong> (moment = weight x distance from the wall). {{img:suite-support.png|A running simply supported beam: the orange arrows are the two support reactions, each carrying half the weight.}}</p>
+<p>A pin can also carry a <strong>motor</strong>: a constant torque, a sinusoidal torque and rotary damping, all in Properties. The <strong>Robotic arm</strong> example is built from these.</p>
+<figure><div class="imgwrap"><img src="file:///C:/Users/thabe/Desktop/Main PC content/In House Software/NOVA - C Interpreter/docs/img/suite-gantry.png"/></div><figcaption><b>Figure 1.4.</b> The Gantry crane example: a bridge welded to two posts, a trolley on a roller and a hanging load. The orange arrows are the weld reactions.</figcaption></figure>
+
+<figure><div class="imgwrap"><img src="file:///C:/Users/thabe/Desktop/Main PC content/In House Software/NOVA - C Interpreter/docs/img/suite-arm.png"/></div><figcaption><b>Figure 1.5.</b> The Robotic arm example: two motorised hinges and a welded payload.</figcaption></figure>
+
+<h2 id="s10">1.5  Springs, dampers, rods and pins</h2>
+
+<p>Click a connection tool, click one body, then click another. Click near a body's centre to attach to its centre; click elsewhere on it to attach at that spot (this makes it twist as well as move).</p>
+<ul>
+<li>A <strong>spring</strong> is born relaxed at the length you drew it. Changing its <strong>rest length</strong> in Properties pre-stretches or pre-compresses it. A positive <strong>cubic stiffness</strong> makes it harder the more it stretches.</li>
+<li>A <strong>damper</strong> resists speed: force = c x (speed of stretching). It turns motion into heat. It is the only thing that dissipates energy in a pure spring-mass system.</li>
+<li>A <strong>rod</strong> holds two points at a fixed distance.</li>
+<li>A <strong>pin</strong> makes two bodies share one point. A pendulum is an anchor, a rod and a ball.</li>
+<li>A <strong>fixed (weld) joint</strong> makes two bodies share one point and one angle: they move as one piece.</li>
+</ul>
+<p>Springs change colour while the model runs: warm when they pull, cool when they push.</p>
+<h2 id="s11">1.6  Properties of a moving body</h2>
+
+<table>
+<thead>
+<tr>
+<th>Property</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Mass</td>
+<td>Kilograms.</td>
+</tr>
+<tr>
+<td>Position and angle</td>
+<td>Where it starts. Editable in design mode only.</td>
+</tr>
+<tr>
+<td>Starting velocity and spin</td>
+<td>How it is moving at the instant you press Run.</td>
+</tr>
+<tr>
+<td>Lock x / lock y</td>
+<td>A <strong>rail</strong>: the body can only slide up and down, or left and right.</td>
+</tr>
+<tr>
+<td>Lock rotation</td>
+<td>The body cannot spin.</td>
+</tr>
+<tr>
+<td>Collides with other bodies</td>
+<td>Switch off for bodies that should pass through each other.</td>
+</tr>
+<tr>
+<td>Harmonic push</td>
+<td>A force F cos(w t) applied to the body: amplitude, direction and frequency. This is how you drive a system to resonance.</td>
+</tr>
+<tr>
+<td>Surface material</td>
+<td>Static friction, kinetic friction, bounciness, rolling resistance.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="s12">1.7  Materials</h2>
+
+<p>The built-in materials give typical textbook values. They are a starting point: type your own numbers for any surface.</p>
+<table>
+<thead>
+<tr>
+<th>Material</th>
+<th>Static friction</th>
+<th>Kinetic friction</th>
+<th>Bounciness (e)</th>
+<th>Rolling resistance</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Ideal</td>
+<td>0</td>
+<td>0</td>
+<td>1.00</td>
+<td>0</td>
+</tr>
+<tr>
+<td>Steel</td>
+<td>0.74</td>
+<td>0.57</td>
+<td>0.65</td>
+<td>0.002</td>
+</tr>
+<tr>
+<td>Aluminium</td>
+<td>0.61</td>
+<td>0.47</td>
+<td>0.60</td>
+<td>0.003</td>
+</tr>
+<tr>
+<td>Rubber</td>
+<td>1.00</td>
+<td>0.80</td>
+<td>0.80</td>
+<td>0.020</td>
+</tr>
+<tr>
+<td>Wood</td>
+<td>0.50</td>
+<td>0.35</td>
+<td>0.50</td>
+<td>0.010</td>
+</tr>
+<tr>
+<td>Concrete</td>
+<td>0.70</td>
+<td>0.60</td>
+<td>0.20</td>
+<td>0.015</td>
+</tr>
+<tr>
+<td>Glass</td>
+<td>0.90</td>
+<td>0.40</td>
+<td>0.70</td>
+<td>0.003</td>
+</tr>
+<tr>
+<td>Ice</td>
+<td>0.10</td>
+<td>0.03</td>
+<td>0.30</td>
+<td>0.001</td>
+</tr>
+<tr>
+<td>Teflon</td>
+<td>0.04</td>
+<td>0.04</td>
+<td>0.50</td>
+<td>0.002</td>
+</tr>
+<tr>
+<td>Clay</td>
+<td>0.60</td>
+<td>0.50</td>
+<td>0.05</td>
+<td>0.030</td>
+</tr>
+</tbody>
+</table>
+<p>When two bodies touch, their friction is combined from both surfaces (by default, the geometric mean: the square root of the product). Bounciness takes the larger of the two. You can change both rules under <strong>Environment, Advanced</strong>.</p>
+<div class="co co-note"><div class="co-t">NOTE</div><p><strong>Static versus kinetic friction.</strong> <em>Static</em> friction decides whether a resting body starts to slide: it slides only when the push along the surface exceeds the static friction times the pressing force. Once sliding, the lower <em>kinetic</em> friction applies. That is why a block on a ramp can stay put at one angle and run away at a slightly steeper one.</p></div>
+<h2 id="s13">1.8  Undo, save, open</h2>
+
+<p><strong>Ctrl+Z</strong> and <strong>Ctrl+Y</strong> undo and redo every edit (a slider drag counts as one step). <strong>Ctrl+S</strong> saves the design as a <code>.vlab</code> file; <strong>Ctrl+O</strong> opens one. The program also remembers your last design automatically.</p>
+<h1 class="chapter" id="c14"><span class="cn">Chapter 2</span><span class="ct">Ideal and Realistic Physics</span></h1>
+
+<p>The <strong>Environment</strong> panel has two big buttons and a list of switches.</p>
+<table>
+<thead>
+<tr>
+<th>Switch</th>
+<th>What it controls</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Ideal</strong></td>
+<td>One press turns friction, inelastic impacts, dampers, rolling resistance and drag all off. Nothing can lose energy.</td>
+</tr>
+<tr>
+<td><strong>Realistic</strong></td>
+<td>Turns friction, inelastic impacts, dampers and rolling resistance on, using the materials.</td>
+</tr>
+<tr>
+<td>Collisions between bodies</td>
+<td>Off: bodies pass through each other.</td>
+</tr>
+<tr>
+<td>Friction</td>
+<td>Off: every surface is slippery (friction = 0).</td>
+</tr>
+<tr>
+<td>Inelastic impacts</td>
+<td>Off: every collision is perfectly elastic (e = 1).</td>
+</tr>
+<tr>
+<td>Rolling resistance</td>
+<td>Off: a ball rolls forever on a flat floor.</td>
+</tr>
+<tr>
+<td>Dampers active</td>
+<td>Off: dampers are ignored.</td>
+</tr>
+<tr>
+<td>Air drag</td>
+<td>A force against velocity: F = -(c1 + c2 &#124;v&#124;) v. You choose c1 and c2.</td>
+</tr>
+<tr>
+<td>Gravity</td>
+<td>Pull toward the bottom of the screen. Presets for Earth, Moon and zero gravity.</td>
+</tr>
+</tbody>
+</table>
+<p>You can mix them: for example, friction on but bouncing perfectly elastic, to isolate the effect of friction alone.</p>
+<h2 id="s15">2.1  What changes when you switch</h2>
+
+<div class="co co-try"><div class="co-t">TRY IT</div><p>Load <strong>Bouncing ball: ideal vs realistic</strong>. Run it in Realistic mode: each bounce is lower than the last and the ball settles on the floor. Now press <strong>Ideal</strong> and run again: the ball returns to its starting height every time, forever. Open <strong>Telemetry, Energy ledger</strong> to see the difference in where the energy goes.</p></div>
+<div class="co co-try"><div class="co-t">TRY IT</div><p>Load <strong>Friction on an incline: four materials</strong> and run it. Rubber and steel stay put; wood and ice slide. Now press <strong>Ideal</strong> (no friction) and run again: all four slide down together with the same acceleration, g sin(angle).</p></div>
+<h2 id="s16">2.2  The energy ledger</h2>
+
+<p>Energy is never created or destroyed; it only changes form. The program keeps a running account and shows it in the <strong>Energy ledger</strong> tab:</p>
+<figure><div class="imgwrap"><img src="file:///C:/Users/thabe/Desktop/Main PC content/In House Software/NOVA - C Interpreter/docs/img/suite-energy.png"/></div><figcaption><b>Figure 2.1.</b> The energy ledger of a tuned-mass-damper run: kinetic, potential and total energy (top left), where the energy went (top right), the cumulative ledger (bottom left) and the energy law with its numerical check (bottom right).</figcaption></figure>
+
+<ul>
+<li><strong>Work in</strong>: energy fed in by pushes and by you dragging with the mouse.</li>
+<li><strong>Dampers</strong>: heat from dampers.</li>
+<li><strong>Air drag</strong>: heat from drag.</li>
+<li><strong>Friction</strong>: heat from sliding and from rolling resistance.</li>
+<li><strong>Impacts</strong>: kinetic energy lost in collisions.</li>
+</ul>
+<p>The law of energy says <strong>E(end) = E(start) + work in - energy lost</strong>. The tab prints both sides and the difference, called the <strong>numerical error</strong>. That number is the program checking itself: it should be tiny (a few thousandths of a joule at most). If it ever grows, something is wrong, and that is useful to know.</p>
+<div class="co co-why"><div class="co-t">WHY?</div><p><strong>Why does this matter?</strong> Many simulators just show motion; you cannot tell if the motion is right. A ledger that balances is strong evidence that the forces and the time stepping are correct, and it teaches the central idea of mechanics: the energy goes somewhere.</p></div>
+<h1 class="chapter" id="c17"><span class="cn">Chapter 3</span><span class="ct">Running the Model</span></h1>
+
+<h2 id="s18">3.1  How long to run</h2>
+
+<p>The <strong>Run</strong> panel starts with the question <em>How long should the model run?</em> Type any number of seconds from a fraction of a second to an hour, or press <strong>5 s, 10 s, 30 s, 1 min, 5 min</strong>. The model stops by itself when the time is up.</p>
+<p>Underneath, <strong>Data rows per second</strong> sets how often the program records a row of data. Higher rates give smoother data and bigger Excel files. A good starting point is 100 rows per second; for a 5-minute run use 20 to 50. The panel tells you how many rows to expect. (A workbook can hold a little over one million rows, so very long runs are automatically thinned to fit.)</p>
+<h2 id="s19">3.2  Two ways to run</h2>
+
+<table>
+<thead>
+<tr>
+<th>Button</th>
+<th>What happens</th>
+<th>Use it when</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Run</strong></td>
+<td>Plays in real time. You can pause, drag bodies with the mouse, and change sliders while it runs.</td>
+<td>You want to watch and play with it.</td>
+</tr>
+<tr>
+<td><strong>Compute the whole run now (fast)</strong></td>
+<td>Runs the full duration as fast as the computer can and shows all the data at once.</td>
+<td>You only need the numbers: a 5-minute run takes about a second.</td>
+</tr>
+</tbody>
+</table>
+<p>Other controls: <strong>Pause/Resume</strong> (Space), <strong>Stop</strong> (Esc) returns to design mode, <strong>Step 1/60 s</strong> advances one frame while paused, and the <strong>real-time speed</strong> slider runs from 0.1x (slow motion) to 4x.</p>
+<figure><div class="imgwrap"><img src="file:///C:/Users/thabe/Desktop/Main PC content/In House Software/NOVA - C Interpreter/docs/img/suite-live.png"/></div><figcaption><b>Figure 3.1.</b> A run in progress. The state, time and mode are shown at the top of the canvas; the spring colours show how hard each one pulls (warm) or pushes (cool).</figcaption></figure>
+
+<div class="co co-tip"><div class="co-t">TIP</div><p><strong>Push things around.</strong> While a run is playing, press the mouse on a moving body and drag. A soft invisible rubber band pulls it toward the cursor, and the energy you put in appears in the ledger as "work in". Let go and watch how the system recovers.</p></div>
+<h2 id="s20">3.3  Changing things while it runs</h2>
+
+<p>Sliders and number fields in <strong>Properties</strong> and <strong>Environment</strong> (stiffness, damping, friction, mass, gravity, even ideal/realistic) take effect immediately in a running model. Changes to the <em>layout</em> (adding, deleting, moving things) need you to press <strong>Stop</strong> first. Press <strong>Stop</strong> and your data from the last run is still there to plot and export.</p>
+<h2 id="s21">3.4  Recording a video</h2>
+
+<p>Press <strong>Record video (F9)</strong> at any time, press it again to finish. The video shows the canvas (or the whole window if you tick the box) and is saved as an <strong>.mp4</strong> in <code>Documents\Vibration Lab Suite\Recordings</code>.</p>
+<p>While recording, every video frame is exactly 1/60 of a second of physics, so the video plays at the correct speed even if your computer was busy while recording. The program uses the video encoder that is already part of Windows; nothing else needs installing.</p>
+<h1 class="chapter" id="c22"><span class="cn">Chapter 4</span><span class="ct">Telemetry and Excel</span></h1>
+
+<h2 id="s23">4.1  What is recorded</h2>
+
+<p>For every moving body, at every sample: its position (x, y), its <strong>displacement</strong> from the start (dx, dy), angle, velocity (vx, vy), speed, spin and kinetic energy. For every spring: length, stretch and force. For every damper: length, stretching rate, force and the heat power it is producing. For the whole system: kinetic, potential and total energy, the energy ledger, and the number of contacts.</p>
+<h2 id="s24">4.2  In the program</h2>
+
+<p>The <strong>Telemetry</strong> panel has seven tabs:</p>
+<ul>
+<li><strong>Plots</strong> - tick any channels and plot them against time. Scroll to zoom, drag to pan, double-click to fit. Quick-pick buttons choose positions, velocities, energy, forces or angles.</li>
+<li><strong>Energy ledger</strong> - where every joule went (see the previous chapter).</li>
+<li><strong>Path and phase</strong> - the path of a body on the canvas, and its phase portrait (velocity against displacement).</li>
+<li><strong>Spectrum</strong> - the frequency content of any signal.</li>
+<li><strong>Statistics</strong> - minimum, maximum, mean, RMS and final value of every channel.</li>
+<li><strong>Modal analysis</strong> - natural frequencies and mode shapes.</li>
+<li><strong>Frequency response</strong> - a resonance curve.</li>
+</ul>
+<figure><div class="imgwrap"><img src="file:///C:/Users/thabe/Desktop/Main PC content/In House Software/NOVA - C Interpreter/docs/img/suite-bounce.png"/></div><figcaption><b>Figure 4.1.</b> The telemetry of a bouncing ball in a realistic environment: the displacement plot shows each bounce a little lower than the last.</figcaption></figure>
+
+<h2 id="s25">4.3  Exporting to Excel</h2>
+
+<p>Press <strong>Export to Excel (.xlsx) with charts</strong> (or Ctrl+E), choose a name and a folder. The workbook is a normal Excel file with these sheets:</p>
+<table>
+<thead>
+<tr>
+<th>Sheet</th>
+<th>What is in it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Summary</strong></td>
+<td>Your whole setup in words and numbers (so the report explains itself): run settings, environment, every body with its shape, mass and material, every connection, the final energy ledger, and statistics of every channel.</td>
+</tr>
+<tr>
+<td><strong>Telemetry</strong></td>
+<td>One row per sample, one column per channel, with units in the headings. The first row is frozen so the headings stay visible.</td>
+</tr>
+<tr>
+<td><strong>Charts</strong></td>
+<td>Ready-made charts: displacement, velocity, rotation angle, energy, the energy ledger, forces and damper power. For runs longer than 20 seconds, an extra chart shows the first 10 seconds in detail.</td>
+</tr>
+<tr>
+<td>Spectrum, Modal, FrequencyResponse</td>
+<td>Included automatically if you computed them before exporting.</td>
+</tr>
+</tbody>
+</table>
+<figure><div class="imgwrap"><img src="file:///C:/Users/thabe/Desktop/Main PC content/In House Software/NOVA - C Interpreter/docs/img/suite-xl-summary.png"/></div><figcaption><b>Figure 4.2.</b> The Summary sheet of the ramp experiment, as it opens in Microsoft Excel.</figcaption></figure>
+
+<figure><div class="imgwrap"><img src="file:///C:/Users/thabe/Desktop/Main PC content/In House Software/NOVA - C Interpreter/docs/img/suite-xl-telemetry.png"/></div><figcaption><b>Figure 4.3.</b> The Telemetry sheet: every sample of every channel, with units.</figcaption></figure>
+
+<p>The charts are real Excel charts that stay linked to the Telemetry sheet. Edit the data and they update; right-click to restyle them.</p>
+<figure><div class="imgwrap"><img src="file:///C:/Users/thabe/Desktop/Main PC content/In House Software/NOVA - C Interpreter/docs/img/suite-xl-chart3.png"/></div><figcaption><b>Figure 4.4.</b> One of the charts Excel shows straight away: the rotation angle of the four blocks on the ramp. The wood block tips as it hits the wall.</figcaption></figure>
+
+<h3>Making your own chart</h3>
+
+<p>On the Telemetry sheet, select the <strong>Time</strong> column and the channel you want (hold Ctrl to select non-adjacent columns), then <strong>Insert, Scatter with Straight Lines</strong>. Every channel is a column; every row is a moment.</p>
+<h3>CSV</h3>
+
+<p><strong>Export CSV</strong> makes a plain table that any program can read (Excel, Python, MATLAB, R). The file starts with a marker so that Excel shows the units correctly.</p>
+<div class="co co-tip"><div class="co-t">TIP</div><p><strong>For homework and lab reports:</strong> export the workbook, copy the charts you need into your report, and keep the Summary sheet: it records exactly which design produced the numbers.</p></div>
+<h1 class="chapter" id="c26"><span class="cn">Chapter 5</span><span class="ct">Worked Tutorials</span></h1>
+
+<h2 id="s27">5.1  1. Natural frequency and damping of a mass on a spring</h2>
+
+<p>Load <strong>Mass-spring-damper (1 degree of freedom)</strong> (mass 2 kg, spring 30 N/m, damper 1.5 N s/m, released from 1 m stretch).</p>
+<ol>
+<li>Press <strong>Compute the whole run now (fast)</strong>.</li>
+<li>Open <strong>Telemetry, Spectrum</strong>, choose the channel <strong>Mass dx</strong>, press <strong>Compute spectrum</strong>. The peak reads <strong>0.61 Hz</strong>; the tab also prints the damping ratio estimated from the decay: <strong>0.097</strong>.</li>
+<li>Theory: natural frequency sqrt(k/m) / (2 pi) = sqrt(15) / (2 pi) = 0.616 Hz. Damping ratio = c / (2 sqrt(k m)) = 1.5 / (2 sqrt(60)) = 0.097.</li>
+<li>Now double the spring to 60 N/m in Properties and repeat: the frequency should rise by a factor of about 1.41.</li>
+</ol>
+<h2 id="s28">5.2  2. Resonance</h2>
+
+<p>Same system, switched to <strong>zero gravity</strong>. Select the mass and set a <strong>harmonic push</strong>: 5 N, direction 0, frequency <strong>3.9 rad/s</strong> (the natural frequency). Run for 30 seconds and look at <strong>Plots</strong> and the <strong>Energy ledger</strong>: the amplitude grows until the energy fed in each cycle equals the heat the damper removes. Now set the push frequency to 8 rad/s: the same push barely moves it. Switch dampers off (press <strong>Ideal</strong>) at resonance and the amplitude grows without limit.</p>
+<h2 id="s29">5.3  3. Which blocks slide?</h2>
+
+<p>Load <strong>Friction on an incline: four materials</strong>. The ramp is 28 degrees, so tan(28 degrees) = 0.53. A block slides only when the static friction between it and the ramp is below 0.53. With a wooden ramp the combined values are rubber 0.71, steel 0.61, wood 0.50, ice 0.22, so rubber and steel stay and wood and ice slide. Run it and confirm, then check the <strong>Energy ledger</strong>: the "friction" bar is the heat from the two sliding blocks.</p>
+<h2 id="s30">5.4  4. Bounce and restitution</h2>
+
+<p>Load <strong>Bouncing ball: ideal vs realistic</strong>. A rubber ball (e = 0.8) dropped from 2 m should rebound to e squared x 2 = 1.28 m, then 0.82 m, and so on. Read the peaks from the <strong>Plots</strong> tab (channel <strong>Ball dy</strong>) and compare. The ledger's <strong>impacts</strong> bar after the first bounce is m g h (1 - e squared) = 3.5 J for the default 0.5 kg ball.</p>
+<h2 id="s31">5.5  5. A tuned mass damper</h2>
+
+<p>Load <strong>Tuned mass damper</strong>: a 10 kg main mass on a spring, pushed at its resonance, with a small 1 kg absorber attached by its own spring and damper.</p>
+<ol>
+<li>Run 40 seconds and look at <strong>Plots</strong>: the main mass moves very little because the absorber takes the motion.</li>
+<li>Open <strong>Frequency response</strong> and press <strong>Run frequency sweep</strong>: instead of one tall resonance peak you see two small ones either side. That split peak is the signature of a tuned absorber.</li>
+<li>Open <strong>Modal analysis</strong> and press the button: the two natural frequencies match the two peaks.</li>
+</ol>
+<figure><div class="imgwrap"><img src="file:///C:/Users/thabe/Desktop/Main PC content/In House Software/NOVA - C Interpreter/docs/img/suite-frf.png"/></div><figcaption><b>Figure 5.1.</b> Frequency response of the tuned mass damper: two modest peaks instead of one tall one. The vertical lines mark the natural frequencies from the modal analysis.</figcaption></figure>
+<h1 class="chapter" id="c32"><span class="cn">Chapter 6</span><span class="ct">Analysis Tools</span></h1>
+
+<h2 id="s33">6.1  Spectrum</h2>
+
+<p>Choose a channel and press <strong>Compute spectrum</strong>. The program shows how strongly each frequency is present in that signal and marks the strongest. It removes the average first (so a constant offset is not mistaken for a very slow wave). For a damped oscillation the peak sits at the <em>damped</em> frequency.</p>
+<figure><div class="imgwrap"><img src="file:///C:/Users/thabe/Desktop/Main PC content/In House Software/NOVA - C Interpreter/docs/img/suite-spectrum.png"/></div><figcaption><b>Figure 6.1.</b> The spectrum of the main mass in the tuned-mass-damper run: the response is concentrated near the system&#x27;s natural frequencies.</figcaption></figure>
+
+<h2 id="s34">6.2  Modal analysis</h2>
+
+<p>A system with several moving parts can vibrate in several <strong>modes</strong>. Each has its own natural frequency and a shape (who moves with whom). Press <strong>Compute natural frequencies and mode shapes</strong> and click a mode: in design mode it is animated on the canvas.</p>
+<figure><div class="imgwrap"><img src="file:///C:/Users/thabe/Desktop/Main PC content/In House Software/NOVA - C Interpreter/docs/img/suite-modal.png"/></div><figcaption><b>Figure 6.2.</b> Two coupled masses: mode 1 (1.007 Hz) moves them together, mode 2 (1.510 Hz) moves them against each other. These match the closed-form answers.</figcaption></figure>
+
+<p>The analysis linearises the springs and dampers about the drawn pose; contacts and joints are ignored. A mode with 0 Hz means part of the system is not held by any spring and can drift.</p>
+<h2 id="s35">6.3  Frequency response</h2>
+
+<p>Choose where to push (the <em>input</em>), where to measure (the <em>output</em>), a range of frequencies, and press <strong>Run frequency sweep</strong>. For each frequency the program runs a full steady-state simulation and reports the amplitude and the phase lag of the response. The result is the resonance curve of the system. Each frequency is a real simulation, so a sweep takes a few seconds to a minute.</p>
+<h1 class="chapter" id="c36"><span class="cn">Chapter 7</span><span class="ct">How Accurate Is It?</span></h1>
+
+<p>Everything the program claims is tested. The validation suite (<strong>Tools\vlab_tests.exe</strong>, its output in <strong>Documents\validation_report.txt</strong>) runs 51 checks against closed-form answers and conservation laws. A selection:</p>
+<table>
+<thead>
+<tr>
+<th>Check</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Mass-spring-damper against its exact solution (10 s)</td>
+<td>worst difference 8 x 10^-13 m</td>
+</tr>
+<tr>
+<td>Frictionless spring pendulum: energy conserved over 30 s</td>
+<td>wandered 3 x 10^-12 J of 23.5 J</td>
+</tr>
+<tr>
+<td>Pendulum period on a rigid rod</td>
+<td>2.8388 s measured, 2.8388 s theory</td>
+</tr>
+<tr>
+<td>Rubber ball rebounds to e^2 x height</td>
+<td>1.281 m measured, 1.280 m theory</td>
+</tr>
+<tr>
+<td>Energy lost in an impact, m g h (1 - e^2)</td>
+<td>3.534 J measured, 3.532 J theory</td>
+</tr>
+<tr>
+<td>Equal-mass elastic collision</td>
+<td>velocities swapped exactly; momentum and energy conserved</td>
+</tr>
+<tr>
+<td>Block sliding to a stop on a flat floor</td>
+<td>distance 5.242 m (theory 5.242 m); friction heat 36.004 J (theory 36.000 J)</td>
+</tr>
+<tr>
+<td>Block on a ramp: a = g (sin - mu cos)</td>
+<td>1.574 m/s^2 measured and theory</td>
+</tr>
+<tr>
+<td>Rolling disc: a = (2/3) g sin(angle)</td>
+<td>2.237 m/s^2 measured and theory</td>
+</tr>
+<tr>
+<td>Rubber and steel stay put when static friction exceeds tan(angle)</td>
+<td>slip 0.0000 m</td>
+</tr>
+<tr>
+<td>Natural frequencies of two coupled masses</td>
+<td>1.0066 and 1.5099 Hz, as theory</td>
+</tr>
+<tr>
+<td>Frequency response of a mass on a spring</td>
+<td>0.169 m/N measured, 0.170 theory (steady-state accuracy 0.6 %)</td>
+</tr>
+<tr>
+<td>Deterministic</td>
+<td>two runs give bit-identical results</td>
+</tr>
+<tr>
+<td>Hinged beam</td>
+<td>period 2.318 s measured, 2.316 s theory</td>
+</tr>
+<tr>
+<td>Simply supported beam</td>
+<td>the two reactions sum to the weight (490.5 N) and are equal</td>
+</tr>
+<tr>
+<td>Cantilever</td>
+<td>support force = total weight, support moment = sum of weight x distance</td>
+</tr>
+<tr>
+<td>Every example's energy ledger</td>
+<td>numerical error under 4 % of the energy that moved</td>
+</tr>
+</tbody>
+</table>
+<h2 id="s37">7.1  Honest limits</h2>
+
+<ul>
+<li>It is a <strong>2-D</strong> simulator. Bodies move in a plane and have a depth of 1 m.</li>
+<li>The material values are generic textbook numbers. Real friction depends on the surface, the speed and the temperature: measure yours for engineering decisions.</li>
+<li>Contacts are solved with a sequential-impulse method with a very small time step. Very high stacks, very fast thin objects and very stiff, very light parts can still misbehave; if the numbers blow up the program stops and tells you.</li>
+<li>It is validated against theory, but it is <strong>not a certified engineering tool</strong>.</li>
+</ul>
+<h1 class="chapter" id="c38"><span class="cn">Chapter 8</span><span class="ct">Troubleshooting and Questions</span></h1>
+
+<table>
+<thead>
+<tr>
+<th>Problem</th>
+<th>What to do</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>"The numbers blew up" message</td>
+<td>A very light body on a very stiff spring, or a huge force. Raise the mass, soften the spring, or reduce the physics step (Environment, Advanced).</td>
+</tr>
+<tr>
+<td>"Press Stop first"</td>
+<td>You tried to add, delete or move something while a run exists. Press <strong>Stop</strong>; sliders and fields still work during a run.</td>
+</tr>
+<tr>
+<td>Nothing happens when I press Run</td>
+<td>There is no moving body. Place a ball, block or polygon.</td>
+</tr>
+<tr>
+<td>A body falls through the floor</td>
+<td>Make sure both have "Collides with other bodies" ticked, collisions are on in the Environment, and the floor line is long enough to reach the body.</td>
+</tr>
+<tr>
+<td>The ball never stops bouncing</td>
+<td>You are in Ideal mode, or the restitution is 1. Press Realistic.</td>
+</tr>
+<tr>
+<td>The block slides although I expect it to stick</td>
+<td>Static friction is below tan(angle). The combined friction is the geometric mean of the two surfaces.</td>
+</tr>
+<tr>
+<td>"Export failed"</td>
+<td>The file is probably open in Excel. Close it or choose another name.</td>
+</tr>
+<tr>
+<td>The video does not appear</td>
+<td>It is in <code>Documents\Vibration Lab Suite\Recordings</code>. If the window was made smaller during recording, the program stops it safely.</td>
+</tr>
+<tr>
+<td>The layout is a mess</td>
+<td>View, Reset window layout.</td>
+</tr>
+<tr>
+<td>I want to run without the window</td>
+<td>Use <code>Tools\vlab_cli.exe --file my.vlab --duration 60 --out result.xlsx</code>.</td>
+</tr>
+</tbody>
+</table>
+<h1 class="chapter" id="c39"><span class="cn">Chapter 9</span><span class="ct">Reference</span></h1>
+
+<h2 id="s40">9.1  Keys and mouse</h2>
+
+<table>
+<thead>
+<tr>
+<th>Input</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Space</td>
+<td>Run / pause</td>
+</tr>
+<tr>
+<td>Esc</td>
+<td>Cancel, back to Select, or stop the run</td>
+</tr>
+<tr>
+<td>F9</td>
+<td>Start or finish recording a video</td>
+</tr>
+<tr>
+<td>Ctrl+N, Ctrl+O, Ctrl+S</td>
+<td>New, open, save a design</td>
+</tr>
+<tr>
+<td>Ctrl+E</td>
+<td>Export to Excel</td>
+</tr>
+<tr>
+<td>Ctrl+Z, Ctrl+Y</td>
+<td>Undo, redo</td>
+</tr>
+<tr>
+<td>Delete</td>
+<td>Delete the selected body or connection</td>
+</tr>
+<tr>
+<td>V, C, B, P, W, T, F, A, S, D, R, J</td>
+<td>Tools: Select, Ball, Block, Polygon, Wedge, Beam, Floor line, Anchor, Spring, Damper, Rod, Pin</td>
+</tr>
+<tr>
+<td>1, 2, 3</td>
+<td>Pin support, Fixed support, Roller support</td>
+</tr>
+<tr>
+<td>Q, E</td>
+<td>Turn the object being placed by 15 degrees (also Ctrl + mouse wheel)</td>
+</tr>
+<tr>
+<td>Shift + click</td>
+<td>Keep the placement tool after placing</td>
+</tr>
+<tr>
+<td>Home</td>
+<td>Fit the design in the canvas</td>
+</tr>
+<tr>
+<td>Mouse wheel</td>
+<td>Zoom about the cursor</td>
+</tr>
+<tr>
+<td>Right or middle drag</td>
+<td>Pan</td>
+</tr>
+<tr>
+<td>Alt</td>
+<td>Ignore the grid while placing or moving</td>
+</tr>
+</tbody>
+</table>
+<h2 id="s41">9.2  Conventions</h2>
+
+<ul>
+<li>Units: metres, kilograms, seconds, newtons, joules, radians per second.</li>
+<li><strong>y points down</strong>, like the screen. Gravity pulls toward positive y. An angle of 0 points right; positive angles turn clockwise on the screen.</li>
+<li>A body's <strong>dx, dy</strong> are its displacement from where it started; <strong>x, y</strong> are absolute.</li>
+</ul>
+<h2 id="s42">9.3  The Excel channels</h2>
+
+<table>
+<thead>
+<tr>
+<th>Channel</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>x, y</td>
+<td>Position of the body's centre (m)</td>
+</tr>
+<tr>
+<td>dx, dy</td>
+<td>Displacement from the start (m)</td>
+</tr>
+<tr>
+<td>angle</td>
+<td>Rotation (degrees)</td>
+</tr>
+<tr>
+<td>vx, vy, speed</td>
+<td>Velocity components and speed (m/s)</td>
+</tr>
+<tr>
+<td>omega</td>
+<td>Spin (rad/s)</td>
+</tr>
+<tr>
+<td>KE</td>
+<td>Kinetic energy of that body (J)</td>
+</tr>
+<tr>
+<td>length, stretch, force</td>
+<td>Spring length, stretch beyond rest length, and tension (positive = pulling)</td>
+</tr>
+<tr>
+<td>rate, power</td>
+<td>Damper stretching rate, and the heat power it makes (W)</td>
+</tr>
+<tr>
+<td>T kinetic, V potential, E total</td>
+<td>Energies of the whole system (J)</td>
+</tr>
+<tr>
+<td>work in, lost viscous / drag / friction / impact / total</td>
+<td>The cumulative energy ledger (J)</td>
+</tr>
+<tr>
+<td>numerical error</td>
+<td>How far the books are from balancing (should be near zero)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="s43">9.4  Command line</h2>
+
+<p><code>vlab_cli --list</code> lists the examples. <code>vlab_cli --example 7 --duration 8 --out ball.xlsx</code> runs example 7 and exports. <code>vlab_cli --file my.vlab --ideal --duration 30 --sample-hz 50 --out run.xlsx</code> runs your design in ideal mode. Add <code>--spectrum</code> or <code>--modal</code> to include those sheets.</p>
+<h2 id="s44">9.5  The Unreal Engine plugin</h2>
+
+<p>The folder <code>UnrealPlugin</code> contains a plugin that runs the same engine inside Unreal Engine 5, so a design made here can drive meshes in a game level. It is a beta scaffold; see its README.</p></body></html>

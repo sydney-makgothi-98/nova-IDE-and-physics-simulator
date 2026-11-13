@@ -1,0 +1,19 @@
+{
+  "name": "nova-ide",
+  "productName": "NOVA IDE",
+  "version": "0.1.0",
+  "description": "In-house C/C++ IDE inspired by the JetBrains workflow",
+  "main": "main.js",
+  "scripts": {
+    "start": "node launch.js"
+  },
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "electron": "^45.3.1",
+    "monaco-editor": "^0.52.2",
+    "node-pty": "^1.1.0"
+  }
+}
