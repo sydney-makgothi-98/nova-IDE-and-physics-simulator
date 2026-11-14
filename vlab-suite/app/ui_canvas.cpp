@@ -126,8 +126,7 @@ void App::zoomBy(double factor) {
     scale = clampd(scale * factor, 0.2, 500.0);
 }
 
-// Sticky zoom-to-fit: every frame of a live run, frame all bodies at their CURRENT poses. Zooming out is immediate (nothing
-// may leave the screen); zooming back in is eased so the picture does not pump.
+// Sticky zoom-to-fit: during a live run, zoom out (once, as far as needed) so no body leaves the canvas.
 void App::trackView(double dt) {
     const Model& m = ses.design();
     double x0 = 1e18, x1 = -1e18, y0 = 1e18, y1 = -1e18;
@@ -147,18 +146,19 @@ void App::trackView(double dt) {
         }
     }
     if (x0 > x1) return;
+    // Zoom out only, and only when something is about to leave the picture: the view grows to hold what it already showed
+    // plus everything now in motion (with some headroom), so it settles and never pumps in and out.
     const double cw = std::max(200.0f, canvasMax.x - canvasMin.x), ch = std::max(150.0f, canvasMax.y - canvasMin.y);
-    const double w = std::max(1.0, x1 - x0), h = std::max(1.0, y1 - y0);
-    const double tScale = clampd(std::min(cw / (w * 1.25), ch / (h * 1.35)), 0.2, 160.0);
-    const Vec2 tCenter((x0 + x1) / 2, (y0 + y1) / 2);
-    const double k = 1.0 - std::exp(-6.0 * dt);
-    double ns = scale + (tScale - scale) * k;
-    Vec2 nc = viewCenter + (tCenter - viewCenter) * k;
-    // the eased view must still contain everything; if not, jump to the target
-    const double hw = cw / (2 * ns), hh = ch / (2 * ns);
-    if (x0 < nc.x - hw * 0.95 || x1 > nc.x + hw * 0.95 || y0 < nc.y - hh * 0.95 || y1 > nc.y + hh * 0.95) { ns = tScale; nc = tCenter; }
-    scale = ns;
-    viewCenter = nc;
+    const double hw = cw / (2 * scale), hh = ch / (2 * scale);
+    const double mx = hw * 0.08, my = hh * 0.12;                                   // keep a margin; the lower edge needs the most
+    const double vx0 = viewCenter.x - hw + mx, vx1 = viewCenter.x + hw - mx, vy0 = viewCenter.y - hh + my, vy1 = viewCenter.y + hh - my;
+    if (x0 >= vx0 && x1 <= vx1 && y0 >= vy0 && y1 <= vy1) return;
+    const double padX = (x1 - x0) * 0.25 + 0.5, padY = (y1 - y0) * 0.25 + 0.5;    // headroom so it does not re-trigger at once
+    const double ux0 = std::min(x0 - padX, viewCenter.x - hw), ux1 = std::max(x1 + padX, viewCenter.x + hw);
+    const double uy0 = std::min(y0 - padY, viewCenter.y - hh), uy1 = std::max(y1 + padY, viewCenter.y + hh);
+    const double ns = std::min(scale, std::min(cw / ((ux1 - ux0) * 1.16), ch / ((uy1 - uy0) * 1.24)));
+    scale = std::max(0.2, ns);
+    viewCenter = Vec2((ux0 + ux1) / 2, (uy0 + uy1) / 2);
 }
 
 // ====================================================================== placing things
@@ -1284,17 +1284,7 @@ void App::drawCanvas() {
         if (ImGui::Button("Compute all", ImVec2(110, 30))) { if (state == RunState::Done || state == RunState::Paused) stopRun(); startRun(false); }
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Runs the whole duration as fast as the computer can, then shows all the data.");
-        ImGui::EndGroup();
-        toolbarMin = ImGui::GetItemRectMin();
-        toolbarMax = ImGui::GetItemRectMax();
-        toolbarMin.x -= 4; toolbarMin.y -= 4; toolbarMax.x += 4; toolbarMax.y += 4;
-    }
-
-    // ---- zoom buttons (top right): + , - and the sticky zoom-to-fit
-    zoomMin = zoomMax = ImVec2(0, 0);
-    if (!(recording && recHideControls)) {
-        ImGui::SetCursorScreenPos(ImVec2(canvasMax.x - 3 * 34 - 10, canvasMin.y + 6));
-        ImGui::BeginGroup();
+        ImGui::SameLine(0, 18);
         if (ImGui::Button("+", ImVec2(30, 30))) zoomBy(1.25);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom in");
         ImGui::SameLine();
@@ -1313,10 +1303,12 @@ void App::drawCanvas() {
         if (fitClicked) { followFit = true; needFit = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom to fit%s: keeps everything that moves on screen. Scrolling, panning or + / - turns it off.", followFit ? " (on)" : "");
         ImGui::EndGroup();
-        zoomMin = ImGui::GetItemRectMin();
-        zoomMax = ImGui::GetItemRectMax();
-        zoomMin.x -= 4; zoomMin.y -= 4; zoomMax.x += 4; zoomMax.y += 4;
+        toolbarMin = ImGui::GetItemRectMin();
+        toolbarMax = ImGui::GetItemRectMax();
+        toolbarMin.x -= 4; toolbarMin.y -= 4; toolbarMax.x += 4; toolbarMax.y += 4;
     }
+
+    zoomMin = zoomMax = ImVec2(0, 0);   // the zoom buttons live in the run strip now
 
     // ---- deformation controls and readout (hidden while recording so the video stays clean)
     static float lastStripW = 800.0f;
