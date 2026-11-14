@@ -134,7 +134,7 @@ struct Environment {
 };
 
 struct RunSettings {
-    double duration = 10.0;          // seconds of simulated time to run
+    double duration = 0.0;           // seconds of simulated time to run; 0 = indefinite (runs until stopped)
     double sampleHz = 100.0;         // telemetry rows per simulated second
 };
 

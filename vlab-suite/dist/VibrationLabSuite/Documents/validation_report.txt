@@ -1,5 +1,5 @@
 Vibration Lab Suite 1.2 - validation report
-Generated 2026-11-13 22:37
+Generated 2026-11-15 01:23
 ======================================================================
 
 Vibration Lab Suite: validation suite
@@ -101,12 +101,12 @@ Files, determinism and the example gallery
   [PASS] deterministic: two runs are bit-identical      6000 steps
       Mass-spring-damper (1 degree of freedom)       numerical    0.0000 J  (dissipated   11.498, pos-correction   0.000, reversible contact exchange   0.000)
       Two coupled masses                             numerical    0.0000 J  (dissipated    3.525, pos-correction   0.000, reversible contact exchange   0.000)
-      Tuned mass damper                              numerical    0.0000 J  (dissipated    0.216, pos-correction   0.000, reversible contact exchange   0.000)
+      Tuned mass damper                              numerical    0.0001 J  (dissipated    0.216, pos-correction   0.000, reversible contact exchange   0.000)
       Spring pendulum                                numerical    0.0000 J  (dissipated    6.857, pos-correction   0.000, reversible contact exchange   0.000)
       Pendulum on a rod                              numerical   -0.0006 J  (dissipated    0.139, pos-correction   0.002, reversible contact exchange   0.000)
       Quarter-car suspension                         numerical    0.0000 J  (dissipated   13.751, pos-correction   0.000, reversible contact exchange   0.000)
       Bouncing ball: ideal vs realistic              numerical    0.0129 J  (dissipated    5.798, pos-correction   0.000, reversible contact exchange   0.000)
-      Friction on an incline: four materials         numerical    0.0190 J  (dissipated   31.091, pos-correction   0.000, reversible contact exchange   0.074)
+      Friction on an incline: four materials         numerical    0.0066 J  (dissipated   31.145, pos-correction   0.000, reversible contact exchange   0.086)
       Collision: two balls                           numerical    0.0000 J  (dissipated    0.000, pos-correction   0.000, reversible contact exchange   0.048)
       Ball rolling down a ramp                       numerical   -0.0008 J  (dissipated    0.594, pos-correction   0.000, reversible contact exchange   0.021)
       Impact of a block on a spring platform         numerical    0.0766 J  (dissipated   42.470, pos-correction   0.000, reversible contact exchange   0.019)

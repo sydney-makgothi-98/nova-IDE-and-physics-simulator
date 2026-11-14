@@ -121,6 +121,46 @@ void App::fitView() {
     viewCenter = Vec2((x0 + x1) / 2, (y0 + y1) / 2);
 }
 
+void App::zoomBy(double factor) {
+    followFit = false;                                                         // a manual zoom takes over from the sticky fit
+    scale = clampd(scale * factor, 0.2, 500.0);
+}
+
+// Sticky zoom-to-fit: every frame of a live run, frame all bodies at their CURRENT poses. Zooming out is immediate (nothing
+// may leave the screen); zooming back in is eased so the picture does not pump.
+void App::trackView(double dt) {
+    const Model& m = ses.design();
+    double x0 = 1e18, x1 = -1e18, y0 = 1e18, y1 = -1e18;
+    auto add = [&](Vec2 q) { x0 = std::min(x0, q.x); x1 = std::max(x1, q.x); y0 = std::min(y0, q.y); y1 = std::max(y1, q.y); };
+    for (int i = 0; i < (int)m.bodies.size(); ++i) {
+        const Body& b = m.bodies[i];
+        if (b.shape.preset == ShapePreset::Line && b.shape.w >= 5000.0) continue;      // an indefinite floor has no extent to frame
+        Vec2 p;
+        double a;
+        if (!bodyPose(i, p, a)) continue;
+        if (b.shape.isCircle() || b.kind == BodyKind::Anchor) {
+            double r = b.kind == BodyKind::Anchor ? 0.2 : b.shape.radius;
+            add(p + Vec2(-r, -r)); add(p + Vec2(r, r));
+        } else {
+            Rot rr(a);
+            for (const Vec2& v : b.shape.verts) add(p + rr.apply(v));
+        }
+    }
+    if (x0 > x1) return;
+    const double cw = std::max(200.0f, canvasMax.x - canvasMin.x), ch = std::max(150.0f, canvasMax.y - canvasMin.y);
+    const double w = std::max(1.0, x1 - x0), h = std::max(1.0, y1 - y0);
+    const double tScale = clampd(std::min(cw / (w * 1.25), ch / (h * 1.35)), 0.2, 160.0);
+    const Vec2 tCenter((x0 + x1) / 2, (y0 + y1) / 2);
+    const double k = 1.0 - std::exp(-6.0 * dt);
+    double ns = scale + (tScale - scale) * k;
+    Vec2 nc = viewCenter + (tCenter - viewCenter) * k;
+    // the eased view must still contain everything; if not, jump to the target
+    const double hw = cw / (2 * ns), hh = ch / (2 * ns);
+    if (x0 < nc.x - hw * 0.95 || x1 > nc.x + hw * 0.95 || y0 < nc.y - hh * 0.95 || y1 > nc.y + hh * 0.95) { ns = tScale; nc = tCenter; }
+    scale = ns;
+    viewCenter = nc;
+}
+
 // ====================================================================== placing things
 // a placement tool places once and returns to Select (hold Shift to keep placing), so existing things stay selectable
 void App::afterPlace() {
@@ -403,12 +443,13 @@ void App::canvasInteract(ImVec2 mp, bool hovered) {
         nextAngle = std::fmod(nextAngle + (io.MouseWheel > 0 ? 5.0f : -5.0f) + 360.0f, 360.0f);
     } else if (hovered && io.MouseWheel != 0) {                  // zoom about the cursor
         Vec2 before = toWorld(mp);
-        scale = clampd(scale * std::pow(1.12, io.MouseWheel), 12.0, 500.0);
+        followFit = false;
+        scale = clampd(scale * std::pow(1.12, io.MouseWheel), 0.2, 500.0);
         Vec2 after = toWorld(mp);
         viewCenter += before - after;
     }
     if (hovered && (ImGui::IsMouseDragging(ImGuiMouseButton_Middle, 0) || ImGui::IsMouseDragging(ImGuiMouseButton_Right, 0)))
-        viewCenter -= Vec2(io.MouseDelta.x / scale, io.MouseDelta.y / scale);
+    { viewCenter -= Vec2(io.MouseDelta.x / scale, io.MouseDelta.y / scale); followFit = false; }
 
     const bool linkTool = tool == Tool::Spring || tool == Tool::Damper || tool == Tool::Rod || tool == Tool::Pin || tool == Tool::Weld;
     const bool supportTool = tool == Tool::SupportPin || tool == Tool::SupportFixed || tool == Tool::SupportRoller;
@@ -593,13 +634,14 @@ void App::drawCanvas() {
     ImGui::SetNextItemAllowOverlap();                                         // the Run buttons and the deformation controls sit on top of the canvas and must get their clicks
     ImGui::InvisibleButton("canvas", size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
     bool hovered = ImGui::IsItemHovered();
-    if (hovered && (ImGui::IsMouseHoveringRect(overlayMin, overlayMax, false) || ImGui::IsMouseHoveringRect(toolbarMin, toolbarMax, false) || ImGui::IsMouseHoveringRect(promptMin, promptMax, false))) hovered = false;   // the deformation controls sit on the canvas
+    if (hovered && (ImGui::IsMouseHoveringRect(overlayMin, overlayMax, false) || ImGui::IsMouseHoveringRect(toolbarMin, toolbarMax, false) || ImGui::IsMouseHoveringRect(promptMin, promptMax, false) || ImGui::IsMouseHoveringRect(zoomMin, zoomMax, false))) hovered = false;   // the deformation controls sit on the canvas
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->PushClipRect(canvasMin, canvasMax, true);
     modeClock += ImGui::GetIO().DeltaTime;
 
     if (needFit && canvasMax.x - canvasMin.x > 100) { fitView(); needFit = false; }
     canvasInteract(ImGui::GetIO().MousePos, hovered);
+    if (followFit && ses.hasWorld()) trackView(ImGui::GetIO().DeltaTime);
     Model& m = design();
 
     // ---- background and grid
@@ -1095,8 +1137,10 @@ void App::drawCanvas() {
     else dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 62), pal.dim, "Click to place. Q / E (or Ctrl+wheel) rotate it first. Shift keeps placing; Esc returns to Select; Alt ignores the grid.");
 
     char st[160];
+    char durTxt[32];
+    std::snprintf(durTxt, sizeof durTxt, "%.1f s", m.run.duration);
     double tnow = ses.hasWorld() ? ses.simTime() : (haveResults && !ses.telemetry().t.empty() ? ses.telemetry().t.back() : 0.0);
-    std::snprintf(st, sizeof st, "%s   t = %.2f s / %.1f s   %s%s", stateName(), tnow, m.run.duration, m.env.realistic ? "REALISTIC" : "IDEAL", (slowRun && state == RunState::Running) ? "   (slower than real time)" : "");
+    std::snprintf(st, sizeof st, "%s   t = %.2f s / %s   %s%s", stateName(), tnow, m.run.duration > 0 ? durTxt : "indefinite", m.env.realistic ? "REALISTIC" : "IDEAL", (slowRun && state == RunState::Running) ? "   (slower than real time)" : "");
     ImVec2 ts = ImGui::CalcTextSize(st);
     ImU32 sc = state == RunState::Running ? IM_COL32(110, 230, 150, 255) : (state == RunState::Design ? pal.amber : IM_COL32(120, 215, 255, 255));
     dl->AddText(ImVec2(canvasMax.x - ts.x - 12, canvasMin.y + 8), sc, st);
@@ -1244,6 +1288,34 @@ void App::drawCanvas() {
         toolbarMin = ImGui::GetItemRectMin();
         toolbarMax = ImGui::GetItemRectMax();
         toolbarMin.x -= 4; toolbarMin.y -= 4; toolbarMax.x += 4; toolbarMax.y += 4;
+    }
+
+    // ---- zoom buttons (top right): + , - and the sticky zoom-to-fit
+    zoomMin = zoomMax = ImVec2(0, 0);
+    if (!(recording && recHideControls)) {
+        ImGui::SetCursorScreenPos(ImVec2(canvasMax.x - 3 * 34 - 10, canvasMin.y + 6));
+        ImGui::BeginGroup();
+        if (ImGui::Button("+", ImVec2(30, 30))) zoomBy(1.25);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom in");
+        ImGui::SameLine();
+        if (ImGui::Button("-", ImVec2(30, 30))) zoomBy(0.8);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom out");
+        ImGui::SameLine();
+        if (followFit) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.14f, 0.45f, 0.70f, 1.0f));
+        const bool fitClicked = ImGui::Button("##zfit", ImVec2(30, 30));
+        if (followFit) ImGui::PopStyleColor();
+        {   // the magnifying glass
+            ImVec2 a = ImGui::GetItemRectMin(), c(a.x + 13, a.y + 13);
+            ImU32 ic = IM_COL32(255, 255, 255, 255);
+            dl->AddCircle(c, 6.5f, ic, 16, 2.0f);
+            dl->AddLine(ImVec2(c.x + 4.6f, c.y + 4.6f), ImVec2(c.x + 10, c.y + 10), ic, 2.5f);
+        }
+        if (fitClicked) { followFit = true; needFit = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom to fit%s: keeps everything that moves on screen. Scrolling, panning or + / - turns it off.", followFit ? " (on)" : "");
+        ImGui::EndGroup();
+        zoomMin = ImGui::GetItemRectMin();
+        zoomMax = ImGui::GetItemRectMax();
+        zoomMin.x -= 4; zoomMin.y -= 4; zoomMax.x += 4; zoomMax.y += 4;
     }
 
     // ---- deformation controls and readout (hidden while recording so the video stays clean)

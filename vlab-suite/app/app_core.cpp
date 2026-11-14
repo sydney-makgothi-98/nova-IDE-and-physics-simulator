@@ -225,7 +225,7 @@ void App::startRun(bool realTime) {
     if (state == RunState::Running || state == RunState::Computing) return;
     Model& m = design();
     if (m.dynamicCount() == 0) { say("Add at least one moving body (a ball, block or polygon) first.", true); return; }
-    if (m.run.duration <= 0) { say("Set a run time greater than zero.", true); return; }
+    if (m.run.duration <= 0 && !realTime) { m.run.duration = 10; say("The run time was indefinite, so 'Compute all' computed 10 s. Set a run time for a longer computation.", false); }
     runModel = m;
     ses.start();
     haveResults = true;

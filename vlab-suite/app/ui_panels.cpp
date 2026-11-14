@@ -1022,9 +1022,13 @@ static void wrapDisabled(const char* fmt, ...) {
 void App::drawRunPanel() {
     Model& m = design();
     ImGui::TextUnformatted("Run time");
-    ImGui::SetNextItemWidth(-1);
     double dur = m.run.duration;
-    if (numField("##dur", &dur, 1.0, "%.2f seconds", 0.05, 3600)) { pushUndo(); m.run.duration = dur; edited(); }
+    bool indef = dur <= 0;
+    if (ImGui::Checkbox("Indefinite (run until stopped)", &indef)) { pushUndo(); m.run.duration = indef ? 0.0 : 10.0; edited(); dur = m.run.duration; }
+    if (!indef) {
+        ImGui::SetNextItemWidth(-1);
+        if (numField("##dur", &dur, 1.0, "%.2f seconds", 0.05, 3600)) { pushUndo(); m.run.duration = dur; edited(); }
+    }
     float bw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 4) / 5;
     const double presets[5] = {5, 10, 30, 60, 300};
     const char* names[5] = {"5 s", "10 s", "30 s", "1 min", "5 min"};
@@ -1038,8 +1042,10 @@ void App::drawRunPanel() {
     labelled("Data rows per second");
     double hz = m.run.sampleHz;
     if (numField("##hz", &hz, 10, "%.0f rows/s", 1, 5000)) { pushUndo(); m.run.sampleHz = hz; edited(); }
-    double rows = m.run.duration * std::min(m.run.sampleHz, 1e6 / std::max(1.0, m.run.duration));
-    ImGui::TextDisabled("about %.0f rows of data", rows);
+    if (m.run.duration > 0) {
+        double rows = m.run.duration * std::min(m.run.sampleHz, 1e6 / std::max(1.0, m.run.duration));
+        ImGui::TextDisabled("about %.0f rows of data", rows);
+    } else ImGui::TextDisabled("%.0f rows per second until you press Stop", m.run.sampleHz);
     ImGui::Separator();
 
     ImGui::TextUnformatted("Speed and accuracy");
@@ -1067,8 +1073,9 @@ void App::drawRunPanel() {
     double tnow = ses.hasWorld() ? ses.simTime() : (haveResults && !ses.telemetry().t.empty() ? ses.telemetry().t.back() : 0.0);
     float frac = (float)clampd(m.run.duration > 0 ? tnow / m.run.duration : 0, 0, 1);
     char pb[96];
-    std::snprintf(pb, sizeof pb, "%.2f / %.2f s   (%d%%)", tnow, m.run.duration, (int)(frac * 100));
-    ImGui::ProgressBar(frac, ImVec2(-1, 0), pb);
+    if (m.run.duration > 0) std::snprintf(pb, sizeof pb, "%.2f / %.2f s   (%d%%)", tnow, m.run.duration, (int)(frac * 100));
+    else std::snprintf(pb, sizeof pb, "%.2f s   (indefinite)", tnow);
+    ImGui::ProgressBar(m.run.duration > 0 ? frac : 0.0f, ImVec2(-1, 0), pb);
     ImGui::TextDisabled("Run, Pause and Stop are at the top of the canvas.");
     if (state == RunState::Computing) { if (ImGui::Button("Cancel", ImVec2(-1, 0))) stopRun(); }
     ImGui::TextWrapped("%s", statusLine.c_str());

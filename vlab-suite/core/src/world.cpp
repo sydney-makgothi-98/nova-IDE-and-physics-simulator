@@ -826,15 +826,40 @@ void World::stepConstrained(double h) {
 // ====================================================================== the public step
 void World::step() {
     const double h = model_.env.dt;
-    double pv0, pd0, pin0, pv1, pd1, pin1;
+    double pv0, pd0, pin0, pv1, pd1, pin1, tail = h;
     computeForces(S_, t_, F_, tau_, &pv0, &pd0, &pin0);
-    if (usesConstraintSolver()) stepConstrained(h);
-    else {
+    if (usesConstraintSolver()) {
+        // Contacts are found at the start of a step, so a body that travels further than its own thickness in one
+        // step can jump clean through a wall or another body. Sub-step so that no collidable body moves more than
+        // a quarter of its smallest dimension per sub-step (usually 1; only fast, hard impacts need more).
+        int sub = 1;
+        if (model_.env.collisions) {
+            double ratio = 0;
+            for (size_t i = 0; i < S_.size(); ++i) {
+                const Body& b = model_.bodies[i];
+                if (!b.isDynamic() || !b.collides()) continue;
+                double thick = b.shape.isCircle() ? b.shape.radius : 1e300;
+                for (size_t k = 0; k < b.shape.verts.size() && k < b.shape.normals.size(); ++k)
+                    thick = std::min(thick, std::fabs(dot(b.shape.normals[k], b.shape.verts[k])));
+                if (thick < 1e-6 || thick > 1e200) continue;
+                double speed = length(S_[i].vel) + length(F_[i]) * b.invMass * h;       // include what this step's forces add
+                double reach = (speed + std::fabs(S_[i].omega) * b.shape.boundingRadius()) * h;
+                ratio = std::max(ratio, reach / (0.25 * thick));
+            }
+            sub = std::min(64, std::max(1, (int)std::ceil(ratio)));
+        }
+        const double hs = h / sub;
+        tail = hs;
+        for (int k = 0; k < sub; ++k) {
+            stepConstrained(hs);
+            if (k + 1 < sub) t_ += hs;
+        }
+    } else {
         stepSmooth(h);
         contacts_.clear();
         contactInfo_.clear();
     }
-    t_ += h;
+    t_ += tail;
     ++steps_;
     computeForces(S_, t_, F_, tau_, &pv1, &pd1, &pin1);
     ledger_.workIn += 0.5 * (pin0 + pin1) * h;                    // trapezoid rule for the three power integrals

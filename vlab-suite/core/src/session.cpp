@@ -33,7 +33,8 @@ void Session::syncLiveEdits() {
 
 double Session::advance(double seconds) {
     if (!world_ || finished_) return 0;
-    const double dt = world_->model().env.dt, end = design_.run.duration;
+    const double dt = world_->model().env.dt, end = design_.run.duration > 0 ? design_.run.duration : 1e300;   // 0 = indefinite
+    const bool indefinite = !(design_.run.duration > 0);
     double simulated = 0;
     acc_ += seconds;
     while (acc_ >= dt) {
@@ -42,6 +43,7 @@ double Session::advance(double seconds) {
         acc_ -= dt;
         simulated += dt;
         if (world_->stepCount() % sampleEvery_ == 0) tel_.append(*world_);
+        if (indefinite && tel_.rows() >= 2000000) { finished_ = true; break; }   // memory guard for a run left going for hours
         if (!world_->healthy()) break;
     }
     if (world_->time() >= end - 1e-9) {

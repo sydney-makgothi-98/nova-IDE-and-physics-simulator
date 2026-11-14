@@ -215,7 +215,7 @@ void App::drawDashboard() {
         ImGui::SetCursorScreenPos(ImVec2(q0.x + 164, q0.y));
         ImGui::BeginGroup();
         ImGui::Text("%s%s", m.name.c_str(), dirty ? "   (unsaved changes)" : "");
-        ImGui::TextDisabled("%d bodies, %d connections, run %.0f s    state: %s", (int)m.bodies.size(), (int)m.links.size(), m.run.duration, stateName());
+        ImGui::TextDisabled("%d bodies, %d connections, run %s    state: %s", (int)m.bodies.size(), (int)m.links.size(), m.run.duration > 0 ? (std::to_string((int)m.run.duration) + " s").c_str() : "indefinite", stateName());
         ImGui::TextDisabled("%s", currentPath.empty() ? "not saved to a file yet" : currentPath.c_str());
         if (ImGui::Button("Continue", ImVec2(110, 28))) focusSim = true;
         ImGui::SameLine();

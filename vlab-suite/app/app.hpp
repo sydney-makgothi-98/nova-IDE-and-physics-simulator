@@ -112,6 +112,10 @@ struct App {
     bool panning = false;
     bool needFit = true;                 // frame the whole design in the canvas on the next draw
     void fitView();
+    bool followFit = true;               // 'zoom to fit' is sticky: while a run is live the view keeps every body on screen
+    ImVec2 zoomMin{0, 0}, zoomMax{0, 0}; // the + / - / zoom-to-fit buttons on the canvas (clicks there are not canvas clicks)
+    void trackView(double dt);
+    void zoomBy(double factor);
     ImVec2 canvasMin{0, 0}, canvasMax{0, 0};   // screen rectangle of the canvas (for recording)
 
     // settings for the next object to be placed
