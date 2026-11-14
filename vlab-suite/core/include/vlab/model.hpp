@@ -1,6 +1,8 @@
 // model.hpp -- the DESIGN: what the user drew (bodies, shapes, materials, links, environment).
 // The design never changes while a simulation runs, except through live property edits.
 #pragma once
+#include <algorithm>
+#include <cmath>
 #include <string>
 #include <vector>
 #include "math.hpp"
@@ -105,6 +107,13 @@ struct Link {
     double motorTorque = 0;   // Pin: constant torque on B (and -torque on A), N m
     double motorAmp = 0;      // Pin: harmonic torque amplitude, N m
     double motorW = 0;        // Pin: harmonic torque frequency, rad/s
+    double kt = 0;            // Pin: torsional spring stiffness N m/rad about the hinge (0 = free hinge); rest angle = refAngle
+    // Distributed spring / damper: the element is spread along a span, from (la, lb) to (la2, lb2) in the two body frames.
+    int dist = 0;             // 0 = one element, 1 = constant distribution, 2 = linear distribution
+    Vec2 la2, lb2;            // far end of the span on each body (local frames)
+    double distM = 0;         // linear distribution: slope per metre of span. Value per metre at distance s along the span is k (or c) + distM * s
+    int distN() const { double L = length(la2 - la); return dist ? std::max(4, std::min(40, (int)std::ceil(L / 0.15))) : 1; }
+    double distSpan() const { return length(la2 - la); }
 };
 
 // ------------------------------------------------------------------ environment

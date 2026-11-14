@@ -432,6 +432,52 @@ int App::pickBodyForLink(Vec2 w) const {
     return best;
 }
 
+// Spread a freshly made spring/damper over the faces where its two bodies meet: the span runs across the connection (perpendicular to it)
+// over the overlap of the two bodies' extents in that direction.
+void App::makeDistribution(int li, Vec2 wa, Vec2 wb) {
+    Model& m = design();
+    if (li < 0 || li >= (int)m.links.size()) return;
+    Link& l = m.links[li];
+    Vec2 d = wb - wa;
+    double len = length(d);
+    Vec2 u = len > 1e-9 ? d * (1.0 / len) : Vec2(0, 1);
+    Vec2 t = Vec2(-u.y, u.x);
+    auto extent = [&](int bi, double& e0, double& e1) {
+        Vec2 p;
+        double a;
+        bodyPose(bi, p, a);
+        const Body& b = m.bodies[bi];
+        double c = dot(t, p);
+        if (b.shape.isCircle()) { e0 = c - b.shape.radius; e1 = c + b.shape.radius; }
+        else if (b.kind == BodyKind::Anchor) { e0 = c - 0.5; e1 = c + 0.5; }
+        else {
+            e0 = 1e18; e1 = -1e18;
+            Rot rr(a);
+            for (const Vec2& v : b.shape.verts) { double q = dot(t, p + rr.apply(v)); e0 = std::min(e0, q); e1 = std::max(e1, q); }
+        }
+    };
+    double a0, a1, b0, b1;
+    extent(l.a, a0, a1);
+    extent(l.b, b0, b1);
+    double o0 = std::max(a0, b0), o1 = std::min(a1, b1);
+    const double sA = dot(t, wa);
+    if (o1 - o0 < 0.1) { o0 = a0; o1 = a1; }
+    o0 = std::max(o0, sA - 10.0); o1 = std::min(o1, sA + 10.0);                // an indefinite floor: only the stretch near the click
+    if (o1 - o0 < 0.1) { o0 = sA - 0.5; o1 = sA + 0.5; }
+    Vec2 pa, pb;
+    double aa, ab;
+    bodyPose(l.a, pa, aa);
+    bodyPose(l.b, pb, ab);
+    auto loc = [&](int bi, Vec2 base, double s) { Vec2 p; double a; bodyPose(bi, p, a); return Rot(a).applyInv(base + t * (s - sA) - p); };
+    l.la = loc(l.a, wa, o0); l.la2 = loc(l.a, wa, o1);
+    l.lb = loc(l.b, wb, o0); l.lb2 = loc(l.b, wb, o1);
+    l.dist = nextDistMode;
+    l.distM = nextDistMode == 2 ? nextSlope : 0.0;
+    if (nextDistMode == 2) { if (l.kind == LinkKind::Spring) l.k = 0; else l.c = 0; }       // y = m x: starts from zero
+    l.L0 = std::max(0.05, len);
+    l.autoRest = false;
+}
+
 // ====================================================================== interaction
 void App::canvasInteract(ImVec2 mp, bool hovered) {
     ImGuiIO& io = ImGui::GetIO();
@@ -451,7 +497,7 @@ void App::canvasInteract(ImVec2 mp, bool hovered) {
     if (hovered && (ImGui::IsMouseDragging(ImGuiMouseButton_Middle, 0) || ImGui::IsMouseDragging(ImGuiMouseButton_Right, 0)))
     { viewCenter -= Vec2(io.MouseDelta.x / scale, io.MouseDelta.y / scale); followFit = false; }
 
-    const bool linkTool = tool == Tool::Spring || tool == Tool::Damper || tool == Tool::Rod || tool == Tool::Pin || tool == Tool::Weld;
+    const bool linkTool = isLinkTool(tool);
     const bool supportTool = tool == Tool::SupportPin || tool == Tool::SupportFixed || tool == Tool::SupportRoller;
     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         if (tool == Tool::Select) {
@@ -504,8 +550,9 @@ void App::canvasInteract(ImVec2 mp, bool hovered) {
                 bodyPose(linkFirst, pa, aa);
                 bodyPose(id, pb, ab);
                 (void)ab;
-                LinkKind k = tool == Tool::Spring ? LinkKind::Spring : tool == Tool::Damper ? LinkKind::Damper : tool == Tool::Rod ? LinkKind::Rod : tool == Tool::Weld ? LinkKind::Weld : LinkKind::Pin;
+                LinkKind k = (tool == Tool::Spring || tool == Tool::SpringDist) ? LinkKind::Spring : (tool == Tool::Damper || tool == Tool::DamperDist) ? LinkKind::Damper : tool == Tool::Rod ? LinkKind::Rod : tool == Tool::Weld ? LinkKind::Weld : LinkKind::Pin;
                 const bool joint = k == LinkKind::Pin || k == LinkKind::Weld;
+                const bool distTool = tool == Tool::SpringDist || tool == Tool::DamperDist;
                 Vec2 wa = pa + Rot(aa).apply(linkFirstLocal), wb;
                 if (joint) {
                     const int saveMode = linkAttach;
@@ -520,7 +567,10 @@ void App::canvasInteract(ImVec2 mp, bool hovered) {
                 int li = m.addLink(k, linkFirst, id, wa, wb);
                 if (li < 0) say("Those two cannot be connected (two fixed things, or the same connection already exists).", true);
                 else {
-                    if (k == LinkKind::Spring) m.links[li].k = nextK;
+                    if (k == LinkKind::Spring) m.links[li].k = distTool ? nextKd : nextK;
+                    if (k == LinkKind::Damper && distTool) m.links[li].c = nextCd;
+                    if (tool == Tool::TorsionSpring) m.links[li].kt = nextKt;
+                    if (distTool) makeDistribution(li, wa, wb);
                     selLink = li;
                     selBody = -1;
                     edited();
@@ -666,6 +716,24 @@ void App::drawCanvas() {
     }
 
     // ---- links
+    // a spring / damper distribution: its elements drawn along the span, heavier where the value per metre is larger
+    auto drawDistribution = [&](ImDrawList* dlp, const Link& l, Vec2 pa, double aa, Vec2 pb, double ab, ImU32 colr, float thick, bool isSpring) {
+        const int N = std::min(l.distN(), 24);
+        const double span = l.distSpan();
+        double hi = 1e-12;
+        for (int q = 0; q < N; ++q) hi = std::max(hi, (isSpring ? l.k : l.c) + (l.dist == 2 ? l.distM * (q + 0.5) / N * span : 0.0));
+        for (int q = 0; q < N; ++q) {
+            const double fr = (q + 0.5) / N;
+            ImVec2 qa = toScreen(pa + Rot(aa).apply(l.la + (l.la2 - l.la) * fr)), qb = toScreen(pb + Rot(ab).apply(l.lb + (l.lb2 - l.lb) * fr));
+            double w = std::max(0.0, (isSpring ? l.k : l.c) + (l.dist == 2 ? l.distM * fr * span : 0.0)) / hi;
+            float t2 = thick * (float)(0.45 + 0.75 * w);
+            if (isSpring) drawSpring(dlp, qa, qb, colr, t2); else drawDamper(dlp, qa, qb, colr, t2);
+        }
+        ImVec2 e0 = toScreen(pa + Rot(aa).apply(l.la)), e1 = toScreen(pa + Rot(aa).apply(l.la2));
+        ImVec2 f0 = toScreen(pb + Rot(ab).apply(l.lb)), f1 = toScreen(pb + Rot(ab).apply(l.lb2));
+        dlp->AddLine(e0, e1, colr, 2.0f);                                   // the two plates the elements are fixed to
+        dlp->AddLine(f0, f1, colr, 2.0f);
+    };
     double forceRef = 5;
     if (ses.hasWorld())
         for (size_t i = 0; i < m.links.size(); ++i)
@@ -688,9 +756,11 @@ void App::drawCanvas() {
                 double f = clampd(ses.world()->link((int)i).force / forceRef, -1, 1);
                 col = f >= 0 ? IM_COL32((int)(225 + 30 * f), (int)(228 - 120 * f), (int)(238 - 200 * f), 255) : IM_COL32((int)(225 + 140 * f), (int)(228 + 20 * f), 245, 255);
             }
-            drawSpring(dl, sa, sb, col, th);
+            if (l.dist) drawDistribution(dl, l, pa, aa, pb, ab, col, th, true);
+            else drawSpring(dl, sa, sb, col, th);
         } else if (l.kind == LinkKind::Damper) {
-            drawDamper(dl, sa, sb, sel ? col : pal.mid, th);
+            if (l.dist) drawDistribution(dl, l, pa, aa, pb, ab, sel ? col : pal.mid, th, false);
+            else drawDamper(dl, sa, sb, sel ? col : pal.mid, th);
         } else if (l.kind == LinkKind::Rod) {
             dl->AddLine(sa, sb, sel ? col : IM_COL32(210, 190, 120, 255), th + 2);
             dl->AddCircleFilled(sa, 4, IM_COL32(40, 40, 40, 255));
@@ -704,6 +774,15 @@ void App::drawCanvas() {
         } else {
             dl->AddCircleFilled(sa, 6, IM_COL32(30, 30, 30, 255));
             dl->AddCircle(sa, 6, sel ? col : IM_COL32(235, 235, 240, 255), 16, 2.0f);
+            if (l.kind == LinkKind::Pin && l.kt != 0) {                      // torsional spring: a coil spiralling out of the hinge
+                ImVec2 pts[64];
+                const int np = 64;
+                for (int q = 0; q < np; ++q) {
+                    float ang = (float)q / (np - 1) * 6.2832f * 2.5f, rad = 9.0f + 9.0f * (float)q / (np - 1);
+                    pts[q] = ImVec2(sa.x + rad * std::cos(ang), sa.y + rad * std::sin(ang));
+                }
+                for (int q = 0; q + 1 < np; ++q) dl->AddLine(pts[q], pts[q + 1], sel ? col : IM_COL32(255, 190, 90, 255), 1.8f);
+            }
         }
         if (showReactions && ses.hasWorld() && l.kind != LinkKind::Spring && l.kind != LinkKind::Damper && l.kind != LinkKind::Rod) {   // reaction force arrow at a joint
             LinkReading rd = ses.world()->link((int)i);
@@ -1077,8 +1156,8 @@ void App::drawCanvas() {
             }
             default: break;
         }
-        if (tool == Tool::Spring || tool == Tool::Damper || tool == Tool::Rod || tool == Tool::Pin || tool == Tool::Weld) {
-            const bool joint = tool == Tool::Pin || tool == Tool::Weld;
+        if (isLinkTool(tool)) {
+            const bool joint = tool == Tool::Pin || tool == Tool::Weld || tool == Tool::TorsionSpring;
             const int saveMode = linkAttach;
             if (joint && linkAttach == 1) linkAttach = 0;
             int hover = pickBodyForLink(toWorld(mp));
@@ -1118,7 +1197,7 @@ void App::drawCanvas() {
                 }
             }
         }
-        if (tool != Tool::Spring && tool != Tool::Damper && tool != Tool::Rod && tool != Tool::Pin && tool != Tool::Weld) {
+        if (!isLinkTool(tool)) {
             char rb[48];
             std::snprintf(rb, sizeof rb, "%.0f deg   (Q / E turn)", nextAngle);
             dl->AddText(ImVec2(c.x + 14, c.y + 12), IM_COL32(150, 215, 255, 230), rb);
@@ -1132,7 +1211,7 @@ void App::drawCanvas() {
     dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 44), pal.text, hud);
     if (tool == Tool::Select) dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 62), pal.dim, state == RunState::Design ? "Click to select, drag to move.  Wheel zooms, right-drag pans." : "Drag a body to push it with the mouse.");
     else if (linkFirst >= 0) dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 62), IM_COL32(90, 205, 255, 255), "Now click the second body.");
-    else if (tool == Tool::Spring || tool == Tool::Damper || tool == Tool::Rod || tool == Tool::Pin || tool == Tool::Weld) dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 62), pal.dim, "Click one body, then another. Esc cancels.");
+    else if (isLinkTool(tool)) dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 62), pal.dim, "Click one body, then another. Esc cancels.");
     else if (tool == Tool::SupportPin || tool == Tool::SupportFixed || tool == Tool::SupportRoller) dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 62), pal.dim, "Click a beam or body: the support snaps to its ends and middle. Q / E turn it. Shift keeps the tool.");
     else dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 62), pal.dim, "Click to place. Q / E (or Ctrl+wheel) rotate it first. Shift keeps placing; Esc returns to Select; Alt ignores the grid.");
 
@@ -1171,9 +1250,9 @@ void App::drawCanvas() {
     }
     // ---- the small box for connections: where it attaches and which way it runs
     promptMin = promptMax = ImVec2(0, 0);
-    if (!recording && (tool == Tool::Spring || tool == Tool::Damper || tool == Tool::Rod || tool == Tool::Pin || tool == Tool::Weld)) {
-        const bool joint = tool == Tool::Pin || tool == Tool::Weld;
-        const char* what = tool == Tool::Spring ? "Spring" : tool == Tool::Damper ? "Damper" : tool == Tool::Rod ? "Rigid rod" : tool == Tool::Pin ? "Pin joint" : "Fixed joint";
+    if (!recording && isLinkTool(tool)) {
+        const bool joint = tool == Tool::Pin || tool == Tool::Weld || tool == Tool::TorsionSpring;
+        const char* what = tool == Tool::Spring ? "Spring" : tool == Tool::Damper ? "Damper" : tool == Tool::SpringDist ? "Spring distribution" : tool == Tool::DamperDist ? "Damper distribution" : tool == Tool::TorsionSpring ? "Torsional spring" : tool == Tool::Rod ? "Rigid rod" : tool == Tool::Pin ? "Pin joint" : "Fixed joint";
         ImVec2 pos(canvasMin.x + 10, canvasMin.y + 104);
         if (linkFirst >= 0) {                                                          // after the first click it sits beside the first attachment point
             ImVec2 a0 = toScreen(linkFirstWorld);

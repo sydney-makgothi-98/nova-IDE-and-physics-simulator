@@ -107,24 +107,38 @@ void World::computeForces(const std::vector<BodyState>& S, double t, std::vector
     for (const Link& l : model_.links) {
         if (l.kind != LinkKind::Spring && l.kind != LinkKind::Damper) continue;
         const BodyState &A = S[l.a], &B = S[l.b];
-        Vec2 ra = A.rot.apply(l.la), rb = B.rot.apply(l.lb);
-        Vec2 d = (B.pos + rb) - (A.pos + ra);
-        double len = length(d);
-        Vec2 u = len > 1e-9 ? d * (1.0 / len) : Vec2(1, 0);
-        double f;
-        if (l.kind == LinkKind::Spring) {
-            double s = len - l.L0;
-            f = l.k * s + l.k3 * s * s * s;                                      // dV/ds
-        } else {
-            if (!env.damping) continue;
-            Vec2 va = A.vel + cross(A.omega, ra), vb = B.vel + cross(B.omega, rb);
-            double rate = dot(u, vb - va);                                       // ds/dt
-            f = l.c * rate;                                                      // dD/d(sdot)
-            pv += l.c * rate * rate;                                             // heat power 2D
+        const int N = l.distN();                                                 // a distribution is N small elements along the span
+        const double span = l.distSpan();
+        for (int q = 0; q < N; ++q) {
+            Vec2 pla = l.la, plb = l.lb;
+            double ke = l.k, ce = l.c;                                           // stiffness / damping of this element
+            if (l.dist) {
+                const double fr = (q + 0.5) / N, sd = fr * span;
+                pla = l.la + (l.la2 - l.la) * fr;
+                plb = l.lb + (l.lb2 - l.lb) * fr;
+                const double add = l.dist == 2 ? l.distM * sd : 0.0;             // constant: k per metre; linear: k + m s per metre
+                ke = std::max(0.0, l.k + add) * span / N;
+                ce = std::max(0.0, l.c + add) * span / N;
+            }
+            Vec2 ra = A.rot.apply(pla), rb = B.rot.apply(plb);
+            Vec2 d = (B.pos + rb) - (A.pos + ra);
+            double len = length(d);
+            Vec2 u = len > 1e-9 ? d * (1.0 / len) : Vec2(1, 0);
+            double f;
+            if (l.kind == LinkKind::Spring) {
+                double s = len - l.L0;
+                f = ke * s + l.k3 * s * s * s;                                   // dV/ds
+            } else {
+                if (!env.damping) break;
+                Vec2 va = A.vel + cross(A.omega, ra), vb = B.vel + cross(B.omega, rb);
+                double rate = dot(u, vb - va);                                   // ds/dt
+                f = ce * rate;                                                   // dD/d(sdot)
+                pv += ce * rate * rate;                                          // heat power 2D
+            }
+            Vec2 Fa = u * f;                                                     // force on a: +f u, on b: -f u
+            if (model_.bodies[l.a].isDynamic()) { F[l.a] += Fa; tau[l.a] += cross(ra, Fa); }
+            if (model_.bodies[l.b].isDynamic()) { F[l.b] -= Fa; tau[l.b] += cross(rb, -Fa); }
         }
-        Vec2 Fa = u * f;                                                         // force on a: +f u, on b: -f u
-        if (model_.bodies[l.a].isDynamic()) { F[l.a] += Fa; tau[l.a] += cross(ra, Fa); }
-        if (model_.bodies[l.b].isDynamic()) { F[l.b] -= Fa; tau[l.b] += cross(rb, -Fa); }
     }
 
     for (const Link& l : model_.links) {                                         // hinge motors and rotary damping
@@ -135,6 +149,7 @@ void World::computeForces(const std::vector<BodyState>& S, double t, std::vector
         double wrel = (db ? B.omega : 0.0) - (da ? A.omega : 0.0);
         double Tc = 0;
         if (l.jointC > 0 && env.damping) { Tc = -l.jointC * wrel; pv += l.jointC * wrel * wrel; }
+        if (l.kt != 0) Tc -= l.kt * (B.angle - A.angle - l.refAngle);   // torsional spring: restoring torque on B
         if (db) tau[l.b] += T + Tc;
         if (da) tau[l.a] -= T + Tc;
         pin += T * wrel;
@@ -162,9 +177,23 @@ double World::potentialEnergy(const std::vector<BodyState>& S) const {
     for (const Link& l : model_.links) {
         if (l.kind != LinkKind::Spring) continue;
         const BodyState &A = S[l.a], &B = S[l.b];
-        double len = length((B.pos + B.rot.apply(l.lb)) - (A.pos + A.rot.apply(l.la)));
-        double s = len - l.L0;
-        V += 0.5 * l.k * s * s + 0.25 * l.k3 * s * s * s * s;
+        const int N = l.distN();
+        const double span = l.distSpan();
+        for (int q = 0; q < N; ++q) {
+            const double fr = (q + 0.5) / N;
+            Vec2 pla = l.la, plb = l.lb;
+            double ke = l.k;
+            if (l.dist) { pla = l.la + (l.la2 - l.la) * fr; plb = l.lb + (l.lb2 - l.lb) * fr; }
+            if (l.dist) ke = std::max(0.0, l.k + (l.dist == 2 ? l.distM * fr * span : 0.0)) * span / N;
+            double len = length((B.pos + B.rot.apply(plb)) - (A.pos + A.rot.apply(pla)));
+            double s = len - l.L0;
+            V += 0.5 * ke * s * s + 0.25 * l.k3 * s * s * s * s;
+        }
+    }
+    for (const Link& l : model_.links) {                                         // torsional springs
+        if (l.kind != LinkKind::Pin || l.kt == 0) continue;
+        double th = S[l.b].angle - S[l.a].angle - l.refAngle;
+        V += 0.5 * l.kt * th * th;
     }
     for (size_t i = 0; i < model_.bodies.size(); ++i) {
         const Body& b = model_.bodies[i];
@@ -253,7 +282,31 @@ LinkReading World::link(int i) const {
     r.length = length(d);
     Vec2 u = r.length > 1e-9 ? d * (1.0 / r.length) : Vec2(1, 0);
     r.rate = dot(u, (B.vel + cross(B.omega, rb)) - (A.vel + cross(A.omega, ra)));
-    if (l.kind == LinkKind::Spring) {
+    if (l.dist && (l.kind == LinkKind::Spring || l.kind == LinkKind::Damper)) {      // a distribution: total force and heat of all its elements
+        const int N = l.distN();
+        const double span = l.distSpan();
+        double ft = 0, pw = 0, st = 0;
+        for (int q = 0; q < N; ++q) {
+            const double fr = (q + 0.5) / N;
+            Vec2 pla = l.la + (l.la2 - l.la) * fr, plb = l.lb + (l.lb2 - l.lb) * fr;
+            Vec2 qa = A.rot.apply(pla), qb = B.rot.apply(plb);
+            Vec2 dd = (B.pos + qb) - (A.pos + qa);
+            double ln = length(dd);
+            Vec2 uu = ln > 1e-9 ? dd * (1.0 / ln) : Vec2(1, 0);
+            double add = l.dist == 2 ? l.distM * fr * span : 0.0;
+            if (l.kind == LinkKind::Spring) {
+                double s = ln - l.L0;
+                ft += std::max(0.0, l.k + add) * span / N * s + l.k3 * s * s * s;
+                st += s / N;
+            } else if (model_.env.damping) {
+                double rt = dot(uu, (B.vel + cross(B.omega, qb)) - (A.vel + cross(A.omega, qa)));
+                double ce = std::max(0.0, l.c + add) * span / N;
+                ft += ce * rt;
+                pw += ce * rt * rt;
+            }
+        }
+        r.force = ft; r.power = pw; r.stretch = st;
+    } else if (l.kind == LinkKind::Spring) {
         r.stretch = r.length - l.L0;
         r.force = l.k * r.stretch + l.k3 * r.stretch * r.stretch * r.stretch;
     } else if (l.kind == LinkKind::Damper) {

@@ -15,7 +15,8 @@ class VideoEncoder;      // encoder.hpp (Media Foundation H.264 writer)
 
 namespace vlab {
 
-enum class Tool { Select, Circle, Box, Polygon, Wedge, Floor, Anchor, Beam, Spring, Damper, Rod, Pin, Weld, SupportPin, SupportFixed, SupportRoller };
+enum class Tool { Select, Circle, Box, Polygon, Wedge, Floor, Anchor, Beam, Spring, Damper, Rod, Pin, Weld, SupportPin, SupportFixed, SupportRoller, SpringDist, DamperDist, TorsionSpring };
+inline bool isLinkTool(Tool t) { return t == Tool::Spring || t == Tool::Damper || t == Tool::Rod || t == Tool::Pin || t == Tool::Weld || t == Tool::SpringDist || t == Tool::DamperDist || t == Tool::TorsionSpring; }
 enum class RunState { Design, Running, Paused, Computing, Done };
 
 // Everything the platform layer (main.cpp) must provide to the application.
@@ -129,6 +130,12 @@ struct App {
     int navMenu = -1;                    // which navbar dropdown is open (-1 none)
     int exampleTab = 0;                  // 0 Basic, 1 Intermediate, 2 Complex
     float nextK = 50.0f;
+    float nextKd = 400.0f;               // spring distribution: stiffness per metre of span (N/m per m)
+    float nextCd = 20.0f;                // damper distribution: damping per metre of span (N s/m per m)
+    float nextSlope = 200.0f;            // linear distribution: change of the value per metre along the span
+    int nextDistMode = 1;                // 1 = constant, 2 = linear (y = m x)
+    float nextKt = 100.0f;               // torsional spring stiffness (N m/rad)
+    void makeDistribution(int li, Vec2 wa, Vec2 wb);   // spread a new spring/damper over the faces of its two bodies
 
     // ---------------------------------------------------------------- undo
     std::vector<Model> undoStack, redoStack;

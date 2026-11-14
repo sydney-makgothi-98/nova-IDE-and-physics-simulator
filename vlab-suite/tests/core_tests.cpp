@@ -719,6 +719,61 @@ static void testSections() {
     }
 }
 
+// ------------------------------------------------------------------ spring / damper distributions and torsional springs
+static void testDistributionsAndTorsion() {
+    std::printf("Spring distributions and torsional springs\n");
+    for (int mode = 1; mode <= 2; ++mode) {
+        Model m;
+        m.env.gravity = 0;
+        Body wall = makeBox(0.4, 2.0, M("Steel"), {0, 0});
+        wall.kind = BodyKind::Static;
+        int iw = m.addBody(wall);
+        Body blk = withMass(makeBox(0.5, 1.0, M("Steel"), {3.5, 0}), 4.0);
+        blk.lockY = true; blk.lockRot = true; blk.collide = false;
+        int ib = m.addBody(blk);
+        m.updateMass();
+        Link l;
+        l.kind = LinkKind::Spring; l.a = iw; l.b = ib; l.autoRest = false; l.L0 = 3.0;
+        l.la = {0, -0.5}; l.la2 = {0, 0.5}; l.lb = {0, -0.5}; l.lb2 = {0, 0.5};
+        l.dist = mode; l.k = mode == 1 ? 100.0 : 0.0; l.distM = mode == 2 ? 200.0 : 0.0;       // both give a total stiffness of 100 N/m over the 1 m span
+        m.links.push_back(l);
+        World w(m);
+        const double wn = std::sqrt(100.0 / 4.0);
+        double worst = 0;
+        long long n = (long long)(3.0 / m.env.dt);
+        for (long long i = 0; i < n; ++i) {
+            w.step();
+            worst = std::fmax(worst, std::fabs(3.0 + 0.5 * std::cos(wn * w.time()) - w.state()[ib].pos.x));
+        }
+        check(mode == 1 ? "constant spring distribution = k x span" : "linear distribution (y = m x) = m span^2 / 2", worst < 0.005, "worst error %.5f m over 3 s (sqrt(K/m) = %.3f rad/s)", worst, wn);
+    }
+    {
+        Model m;
+        m.env.gravity = 0;
+        int ib = m.addBody(withMass(makeBox(2.0, 0.2, M("Steel"), {0, 0}), 3.0));
+        m.updateMass();
+        int li = m.addSupport(LinkKind::Pin, ib, {-1.0, 0.0}, 0);
+        m.links[li].kt = 40.0;
+        const double th0 = 0.1;                                   // release the beam turned by 0.1 rad about its pin
+        m.bodies[ib].angle = th0;
+        m.bodies[ib].pos = Vec2(-1.0, 0.0) + Rot(th0).apply(Vec2(1.0, 0.0));
+        World w(m);
+        w.model().links[li].refAngle = 0.0;                       // the rest angle follows the drawing at the start of a run; here the spring rests at 0
+        const double I = m.bodies[ib].inertia + 3.0 * 1.0, wn = std::sqrt(40.0 / I);
+        double tz = -1;
+        double prev = th0;
+        long long n = (long long)(3.0 / m.env.dt);
+        for (long long i = 0; i < n; ++i) {
+            w.step();
+            double th = w.state()[ib].angle;
+            if (tz < 0 && prev > 0 && th <= 0) tz = w.time();
+            prev = th;
+        }
+        const double expect = kPi / (2 * wn);
+        check("torsional spring: quarter period = (pi/2) sqrt(I/kt)", tz > 0 && std::fabs(tz - expect) / expect < 0.03, "first zero at %.4f s, theory %.4f s", tz, expect);
+    }
+}
+
 int main() {
     std::printf("Vibration Lab Suite: validation suite\n\n");
     testDeformation();
@@ -733,6 +788,7 @@ int main() {
     testStructures();
     testAnalysis();
     testSystem();
+    testDistributionsAndTorsion();
     std::printf("\n%d of %d checks passed\n", gTotal - gFail, gTotal);
     return gFail ? 1 : 0;
 }

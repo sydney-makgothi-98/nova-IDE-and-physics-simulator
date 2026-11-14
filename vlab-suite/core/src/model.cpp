@@ -186,7 +186,7 @@ int Model::addLink(LinkKind kind, int a, int b, Vec2 wpA, Vec2 wpB) {
     if (kind == LinkKind::Spring || kind == LinkKind::Rod) l.L0 = std::max(0.05, length(wpB - wpA));
     if (kind == LinkKind::Damper) l.c = 2.0;
     if (kind != LinkKind::Spring && kind != LinkKind::Damper) l.autoRest = false;
-    if (kind == LinkKind::Weld) l.refAngle = bodies[b].angle - bodies[a].angle;
+    if (kind == LinkKind::Weld || kind == LinkKind::Pin) l.refAngle = bodies[b].angle - bodies[a].angle;
     links.push_back(l);
     return (int)links.size() - 1;
 }
@@ -210,7 +210,7 @@ void Model::removeLink(int i) {
 
 void Model::refreshAutoRest() {
     for (Link& l : links)
-        if (l.kind == LinkKind::Weld) l.refAngle = bodies[l.b].angle - bodies[l.a].angle;
+        if (l.kind == LinkKind::Weld || (l.kind == LinkKind::Pin && l.kt != 0)) l.refAngle = bodies[l.b].angle - bodies[l.a].angle;
     for (Link& l : links)
         if (l.kind == LinkKind::Spring && l.autoRest)
             l.L0 = std::max(0.05, length(worldPoint(l.b, l.lb) - worldPoint(l.a, l.la)));

@@ -182,6 +182,9 @@ static const char* toolTitle(Tool t) {
         case Tool::Beam: return "Beam";
         case Tool::Spring: return "Spring";
         case Tool::Damper: return "Damper";
+        case Tool::SpringDist: return "Spring distribution";
+        case Tool::DamperDist: return "Damper distribution";
+        case Tool::TorsionSpring: return "Torsional spring";
         case Tool::Rod: return "Rigid rod";
         case Tool::Pin: return "Pin joint";
         case Tool::Weld: return "Fixed (weld) joint";
@@ -345,12 +348,15 @@ void App::drawSidebar() {
         menuItem(*this, Tool::SupportRoller, "3", "Holds the beam up but lets it slide along the support's axis.");
         ImGui::EndPopup();
     }
-    const bool isLink = tool == Tool::Spring || tool == Tool::Damper || tool == Tool::Rod || tool == Tool::Pin || tool == Tool::Weld;
+    const bool isLink = isLinkTool(tool);
     if (navButton("Connections", "nav_links", isLink, 2).first) {
         ImGui::TextUnformatted("CONNECTIONS  (click one body, then another)");
         ImGui::Separator();
         menuItem(*this, Tool::Spring, "S", "Pushes and pulls with a stiffness you choose.");
         menuItem(*this, Tool::Damper, "D", "A shock absorber: resists speed and makes heat.");
+        menuItem(*this, Tool::SpringDist, "", "A row of springs spread along the contact: constant stiffness per metre, or growing linearly (y = m x).");
+        menuItem(*this, Tool::DamperDist, "", "A row of dampers spread along the contact: constant or linearly varying damping per metre.");
+        menuItem(*this, Tool::TorsionSpring, "", "A hinge with a torsional spring: it pulls the two bodies back to the angle they were drawn at.");
         menuItem(*this, Tool::Rod, "R", "A rigid bar of fixed length.");
         menuItem(*this, Tool::Pin, "J", "A hinge: two bodies share a point and can swivel. Add a motor in Properties.");
         menuItem(*this, Tool::Weld, "", "Glues two bodies together at a point, angle included.");
@@ -440,6 +446,30 @@ void App::drawSidebar() {
             ImGui::SetNextItemWidth(-1);
             ImGui::DragFloat("##k", &nextK, 1.0f, 0.1f, 5000.0f, "%.1f");
             break;
+        case Tool::SpringDist:
+        case Tool::DamperDist: {
+            const bool sp = tool == Tool::SpringDist;
+            ImGui::RadioButton("Constant", &nextDistMode, 1);
+            ImGui::SameLine();
+            ImGui::RadioButton("Linear  (y = m x)", &nextDistMode, 2);
+            labelled(sp ? "Stiffness per metre (N/m per m)" : "Damping per metre (N s/m per m)");
+            ImGui::SetNextItemWidth(-1);
+            if (sp) ImGui::DragFloat("##kd", &nextKd, 1.0f, 0.0f, 1e6f, "%.1f"); else ImGui::DragFloat("##cd", &nextCd, 0.5f, 0.0f, 1e6f, "%.1f");
+            if (nextDistMode == 2) {
+                labelled("Slope m (per metre along the span)");
+                ImGui::SetNextItemWidth(-1);
+                ImGui::DragFloat("##sl", &nextSlope, 1.0f, -1e6f, 1e6f, "%.1f");
+                ImGui::TextDisabled("value at distance x along the span = start value + m x");
+            }
+            ImGui::TextDisabled("Spread over where the two bodies face each other.");
+            break;
+        }
+        case Tool::TorsionSpring:
+            labelled("Torsional stiffness (N m/rad)");
+            ImGui::SetNextItemWidth(-1);
+            ImGui::DragFloat("##kt", &nextKt, 1.0f, 0.0f, 1e6f, "%.1f");
+            ImGui::TextDisabled("A hinge point: click one body, then the other where they join.");
+            break;
         default: break;
     }
     if (tool == Tool::Circle || tool == Tool::Box || tool == Tool::Polygon || tool == Tool::Wedge) {
@@ -453,7 +483,7 @@ void App::drawSidebar() {
         ImGui::TextDisabled("friction mu_s %.2f, mu_k %.2f, bounce e %.2f", lib[nextMaterial].muS, lib[nextMaterial].muK, lib[nextMaterial].restitution);
         if (tool == Tool::Beam) ImGui::TextDisabled("A beam's mass comes from its material density, size and a 1 m depth. Change it in Properties.");
     }
-    if (tool != Tool::Select && tool != Tool::Spring && tool != Tool::Damper && tool != Tool::Rod && tool != Tool::Pin && tool != Tool::Weld && tool != Tool::Anchor) {
+    if (tool != Tool::Select && !isLinkTool(tool) && tool != Tool::Anchor) {
         labelled("Rotation (deg) - or Q / E, Ctrl+wheel");
         ImGui::SetNextItemWidth(-1);
         ImGui::DragFloat("##rot", &nextAngle, 0.5f, -360.0f, 360.0f, "%.1f");
@@ -820,13 +850,26 @@ void App::drawProperties() {
         const bool support = !m.bodies[l.a].isDynamic() && (l.kind == LinkKind::Pin || l.kind == LinkKind::Weld || l.kind == LinkKind::Roller);
         const char* kn = l.kind == LinkKind::Spring ? "Spring" : (l.kind == LinkKind::Damper ? "Damper" : (l.kind == LinkKind::Rod ? "Rigid rod" :
                          (l.kind == LinkKind::Weld ? (support ? "Fixed support (cantilever)" : "Fixed (weld) joint") :
-                          (l.kind == LinkKind::Roller ? (support ? "Roller support" : "Roller joint") : (support ? "Pin support" : "Pin joint")))));
+                          (l.kind == LinkKind::Roller ? (support ? "Roller support" : "Roller joint") : (support ? (l.kt != 0 ? "Pin support with torsional spring" : "Pin support") : (l.kt != 0 ? "Torsional spring (hinge)" : "Pin joint"))))));
         ImGui::Text("%s", kn);
         ImGui::TextDisabled("%s  -  %s", m.bodies[l.a].name.c_str(), m.bodies[l.b].name.c_str());
         ImGui::Separator();
         bool c = false;
+        if (l.dist && (l.kind == LinkKind::Spring || l.kind == LinkKind::Damper)) {
+            const bool sp = l.kind == LinkKind::Spring;
+            int mode = l.dist;
+            ImGui::TextUnformatted("Distribution");
+            if (ImGui::RadioButton("Constant", &mode, 1)) { l.dist = 1; c = true; }
+            ImGui::SameLine();
+            if (ImGui::RadioButton("Linear  (y = m x + start)", &mode, 2)) { l.dist = 2; c = true; }
+            labelled(l.dist == 2 ? (sp ? "Stiffness at the start (N/m per m)" : "Damping at the start (N s/m per m)") : (sp ? "Stiffness per metre (N/m per m)" : "Damping per metre (N s/m per m)"));
+            c |= numField("##dv", sp ? &l.k : &l.c, 1, "%.3f", 0, 1e7);
+            if (l.dist == 2) { labelled("Slope m (per metre along the span)"); c |= numField("##dm", &l.distM, 1, "%.3f", -1e7, 1e7); }
+            ImGui::TextDisabled("%d elements over %.2f m, total %s %.1f", l.distN(), l.distSpan(), sp ? "stiffness" : "damping",
+                                (sp ? l.k : l.c) * l.distSpan() + (l.dist == 2 ? 0.5 * l.distM * l.distSpan() * l.distSpan() : 0.0));
+        }
         if (l.kind == LinkKind::Spring) {
-            labelled("Stiffness k (N/m)"); c |= numField("##k", &l.k, 1, "%.3f", 0, 1e6);
+            if (!l.dist) { labelled("Stiffness k (N/m)"); c |= numField("##k", &l.k, 1, "%.3f", 0, 1e6); }
             labelled("Rest length (m)");
             if (numField("##L0", &l.L0, 0.05, "%.4f", 0.05, 200)) { l.autoRest = false; c = true; }
             if (ImGui::Button("Set rest length to the drawn length", ImVec2(-1, 0))) { l.L0 = std::max(0.05, length(m.worldPoint(l.b, l.lb) - m.worldPoint(l.a, l.la))); l.autoRest = false; c = true; }
@@ -835,12 +878,16 @@ void App::drawProperties() {
             if (l.autoRest) ImGui::TextDisabled("Rest length follows the drawing (change it to preload the spring).");
             else ImGui::TextDisabled("Drawn length now: %.3f m", length(m.worldPoint(l.b, l.lb) - m.worldPoint(l.a, l.la)));
         } else if (l.kind == LinkKind::Damper) {
-            labelled("Damping c (N s/m)"); c |= numField("##c", &l.c, 0.1, "%.3f", 0, 1e6);
+            if (!l.dist) { labelled("Damping c (N s/m)"); c |= numField("##c", &l.c, 0.1, "%.3f", 0, 1e6); }
             if (!m.env.damping) ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1), "Dampers are switched OFF in the Environment (ideal mode).");
         } else if (l.kind == LinkKind::Rod) {
             labelled("Rod length (m)"); c |= numField("##rl", &l.L0, 0.05, "%.4f", 0.05, 200);
         }
         if (l.kind == LinkKind::Pin) {
+            ImGui::TextUnformatted("Torsional spring");
+            labelled("Torsional stiffness (N m/rad)"); c |= numField("##kt", &l.kt, 1, "%.3f", 0, 1e7);
+            helpMarker("Restoring torque = kt x (angle turned from the drawn angle). 0 = a free hinge.");
+            if (l.kt != 0) ImGui::TextDisabled("Rest angle (relative) %.1f deg", l.refAngle * 180.0 / kPi);
             ImGui::TextUnformatted("Hinge motor and friction");
             labelled("Rotary damping (N m s/rad)"); c |= numField("##jc", &l.jointC, 0.1, "%.3f", 0, 1e6);
             labelled("Constant motor torque (N m)"); c |= numField("##mt", &l.motorTorque, 1, "%.3f", -1e6, 1e6);

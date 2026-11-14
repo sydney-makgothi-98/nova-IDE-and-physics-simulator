@@ -1,5 +1,5 @@
 Vibration Lab Suite 1.2 - validation report
-Generated 2026-11-15 01:28
+Generated 2026-11-15 01:37
 ======================================================================
 
 Vibration Lab Suite: validation suite
@@ -125,5 +125,9 @@ Files, determinism and the example gallery
   [PASS] all gallery examples run 2 s without blowing up 23 examples 
   [PASS] every example's energy ledger stays honest     worst relative error 0.0381 (Simply supported beam with a load)
   [PASS] live edit: removing friction mid-run makes the block slide speed 4.832 m/s
+Spring distributions and torsional springs
+  [PASS] constant spring distribution = k x span        worst error 0.00000 m over 3 s (sqrt(K/m) = 5.000 rad/s)
+  [PASS] linear distribution (y = m x) = m span^2 / 2   worst error 0.00000 m over 3 s (sqrt(K/m) = 5.000 rad/s)
+  [PASS] torsional spring: quarter period = (pi/2) sqrt(I/kt) first zero at 0.4972 s, theory 0.4973 s
 
-86 of 86 checks passed
+89 of 89 checks passed

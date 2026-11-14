@@ -34,7 +34,7 @@ std::string modelToText(const Model& m) {
     for (const Link& l : m.links) {
         o << "link\t" << (int)l.kind << "\t" << l.a << "\t" << l.b << "\t" << l.la.x << "\t" << l.la.y << "\t" << l.lb.x << "\t" << l.lb.y
           << "\t" << l.k << "\t" << l.k3 << "\t" << l.L0 << "\t" << l.autoRest << "\t" << l.c << "\t" << l.collideConnected << "\t" << l.refAngle << "\t" << l.jointC << "\t" << l.motorTorque
-          << "\t" << l.motorAmp << "\t" << l.motorW << "\n";
+          << "\t" << l.motorAmp << "\t" << l.motorW << "\t" << l.kt << "\t" << l.dist << "\t" << l.la2.x << "\t" << l.la2.y << "\t" << l.lb2.x << "\t" << l.lb2.y << "\t" << l.distM << "\n";
     }
     return o.str();
 }
@@ -124,6 +124,7 @@ bool modelFromText(const std::string& text, Model& out, std::string* error) {
             l.k = num(f, 8, 50); l.k3 = num(f, 9); l.L0 = num(f, 10, 1); l.autoRest = num(f, 11) != 0; l.c = num(f, 12, 1);
             l.collideConnected = num(f, 13) != 0;
             l.refAngle = num(f, 14); l.jointC = num(f, 15); l.motorTorque = num(f, 16); l.motorAmp = num(f, 17); l.motorW = num(f, 18);
+            l.kt = num(f, 19); l.dist = (int)num(f, 20); l.la2 = Vec2(num(f, 21), num(f, 22)); l.lb2 = Vec2(num(f, 23), num(f, 24)); l.distM = num(f, 25);
             m.links.push_back(l);
         }
     }
