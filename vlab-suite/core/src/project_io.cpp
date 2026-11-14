@@ -29,7 +29,7 @@ std::string modelToText(const Model& m) {
           << b.mat.muS << "\t" << b.mat.muK << "\t" << b.mat.restitution << "\t" << b.mat.rollRes << "\t" << b.massFromDensity << "\t"
           << b.mass << "\t" << b.pos.x << "\t" << b.pos.y << "\t" << b.angle << "\t" << b.vel.x << "\t" << b.vel.y << "\t" << b.omega
           << "\t" << b.lockX << "\t" << b.lockY << "\t" << b.lockRot << "\t" << b.driveF << "\t" << b.driveAngleDeg << "\t" << b.driveW
-          << "\t" << b.color << "\t" << b.collide << "\t" << b.mat.youngs << "\t" << b.driveT << "\t" << b.loadN << "\t" << b.loadAngleDeg << "\t" << b.loadPull << "\t" << b.dloadType << "\t" << b.dloadN << "\t" << b.dloadAngleDeg << "\t" << b.dloadX0 << "\t" << b.dloadX1 << "\t" << clean(b.dloadExpr) << "\t" << b.secType << "\t" << b.secB << "\t" << b.secH << "\t" << b.secTf << "\t" << b.secTw << "\t" << b.tempDelta << "\t" << b.tempGrad << "\t" << b.mat.alphaT << "\n";
+          << "\t" << b.color << "\t" << b.collide << "\t" << b.mat.youngs << "\t" << b.driveT << "\t" << b.loadN << "\t" << b.loadAngleDeg << "\t" << b.loadPull << "\t" << b.dloadType << "\t" << b.dloadN << "\t" << b.dloadAngleDeg << "\t" << b.dloadX0 << "\t" << b.dloadX1 << "\t" << clean(b.dloadExpr) << "\t" << b.secType << "\t" << b.secB << "\t" << b.secH << "\t" << b.secTf << "\t" << b.secTw << "\t" << b.tempDelta << "\t" << b.tempGrad << "\t" << b.mat.alphaT << "\t" << b.momentN << "\t" << b.momentTimeVar << "\t" << clean(b.momentExpr) << "\t" << b.loadTimeVar << "\t" << clean(b.loadExpr) << "\n";
     }
     for (const Link& l : m.links) {
         o << "link\t" << (int)l.kind << "\t" << l.a << "\t" << l.b << "\t" << l.la.x << "\t" << l.la.y << "\t" << l.lb.x << "\t" << l.lb.y
@@ -115,6 +115,11 @@ bool modelFromText(const std::string& text, Model& out, std::string* error) {
             if (f.size() > 46) b.tempDelta = num(f, 46, 0);
             if (f.size() > 47) b.tempGrad = num(f, 47, 0);
             if (f.size() > 48 && num(f, 48, 0) != 0) b.mat.alphaT = num(f, 48, b.mat.alphaT);
+            if (f.size() > 49) b.momentN = num(f, 49, 0);
+            if (f.size() > 50) b.momentTimeVar = num(f, 50, 0) != 0;
+            if (f.size() > 51 && !f[51].empty()) b.momentExpr = f[51];
+            if (f.size() > 52) b.loadTimeVar = num(f, 52, 0) != 0;
+            if (f.size() > 53 && !f[53].empty()) b.loadExpr = f[53];
             m.bodies.push_back(b);
         } else if (k == "link" && f.size() >= 14) {
             Link l;

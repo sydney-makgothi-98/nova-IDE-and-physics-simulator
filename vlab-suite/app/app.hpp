@@ -114,6 +114,7 @@ struct App {
     bool needFit = true;                 // frame the whole design in the canvas on the next draw
     void fitView();
     bool followFit = true;               // 'zoom to fit' is sticky: while a run is live the view keeps every body on screen
+    ImVec2 delMin{0, 0}, delMax{0, 0};   // the small red delete icon next to the selection
     ImVec2 zoomMin{0, 0}, zoomMax{0, 0}; // the + / - / zoom-to-fit buttons on the canvas (clicks there are not canvas clicks)
     void trackView(double dt);
     void zoomBy(double factor);

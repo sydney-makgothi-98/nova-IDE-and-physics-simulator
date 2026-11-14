@@ -97,6 +97,11 @@ void World::computeForces(const std::vector<BodyState>& S, double t, std::vector
             distributedForce(s, (int)i, t, fd, td);                              // distributed load: its resultant force and torque
             if (fd.x != 0 || fd.y != 0 || td != 0) { F[i] += fd; tau[i] += td; pin += dot(fd, s.vel) + td * s.omega; }
         }
+        {
+            double M = b.momentN;                                                // applied moment, clockwise on screen when positive
+            if (b.momentTimeVar) M = (i < mexpr_.size() && mexpr_[i]) ? mexpr_[i]->eval(0, 1, t) : 0.0;
+            if (M != 0 && !b.lockRot) { tau[i] += M; pin += M * s.omega; }
+        }
         if (env.airDrag) {                                                       // F = -(c1 + c2 |v|) v
             double sp = length(s.vel), c = env.drag1 + env.drag2 * sp;
             F[i] += s.vel * (-c);
@@ -221,6 +226,12 @@ void World::rebaseLedger() {
 
 void World::rebuildExprs() {
     dexpr_.assign(model_.bodies.size(), nullptr);
+    lexpr_.assign(model_.bodies.size(), nullptr);
+    mexpr_.assign(model_.bodies.size(), nullptr);
+    for (size_t i = 0; i < model_.bodies.size(); ++i) {
+        if (model_.bodies[i].loadTimeVar) lexpr_[i] = Expr::parse(model_.bodies[i].loadExpr);
+        if (model_.bodies[i].momentTimeVar) mexpr_[i] = Expr::parse(model_.bodies[i].momentExpr);
+    }
     for (size_t i = 0; i < model_.bodies.size(); ++i)
         if (model_.bodies[i].dloadType == DL_Equation) dexpr_[i] = Expr::parse(model_.bodies[i].dloadExpr);
 }
@@ -265,9 +276,11 @@ Vec2 World::externalForce(int i, double t) const {
         double a = b.driveAngleDeg * kPi / 180.0;
         d += Vec2(f * std::cos(a), f * std::sin(a));
     }
-    if (b.loadN != 0) {
+    double mag = b.loadN;
+    if (b.loadTimeVar) mag = (i < (int)lexpr_.size() && lexpr_[i]) ? lexpr_[i]->eval(0, 1, t) : 0.0;     // F(t)
+    if (mag != 0) {
         double a = (b.loadAngleDeg + (b.loadPull ? 180.0 : 0.0)) * kPi / 180.0;
-        d += Vec2(b.loadN * std::cos(a), b.loadN * std::sin(a));
+        d += Vec2(mag * std::cos(a), mag * std::sin(a));
     }
     return d;
 }

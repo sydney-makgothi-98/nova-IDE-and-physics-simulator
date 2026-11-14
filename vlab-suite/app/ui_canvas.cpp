@@ -432,49 +432,70 @@ int App::pickBodyForLink(Vec2 w) const {
     return best;
 }
 
-// Spread a freshly made spring/damper over the faces where its two bodies meet: the span runs across the connection (perpendicular to it)
-// over the overlap of the two bodies' extents in that direction.
+// Spread a freshly made spring/damper between a grounded surface and the face of the object that looks at it. Only those two things matter:
+// the span runs along the object's face (clipped to the ground's extent), and the springs run perpendicular to it, from the ground
+// surface to the face.
 void App::makeDistribution(int li, Vec2 wa, Vec2 wb) {
+    (void)wa; (void)wb;
     Model& m = design();
     if (li < 0 || li >= (int)m.links.size()) return;
     Link& l = m.links[li];
-    Vec2 d = wb - wa;
-    double len = length(d);
-    Vec2 u = len > 1e-9 ? d * (1.0 / len) : Vec2(0, 1);
-    Vec2 t = Vec2(-u.y, u.x);
-    auto extent = [&](int bi, double& e0, double& e1) {
-        Vec2 p;
-        double a;
-        bodyPose(bi, p, a);
-        const Body& b = m.bodies[bi];
-        double c = dot(t, p);
-        if (b.shape.isCircle()) { e0 = c - b.shape.radius; e1 = c + b.shape.radius; }
-        else if (b.kind == BodyKind::Anchor) { e0 = c - 0.5; e1 = c + 0.5; }
-        else {
-            e0 = 1e18; e1 = -1e18;
-            Rot rr(a);
-            for (const Vec2& v : b.shape.verts) { double q = dot(t, p + rr.apply(v)); e0 = std::min(e0, q); e1 = std::max(e1, q); }
-        }
+    const int ia = l.a, ib = l.b;
+    const bool aFixed = !m.bodies[ia].isDynamic();
+    const int ig = aFixed ? ia : (!m.bodies[ib].isDynamic() ? ib : ia);                 // the ground; if neither is fixed, the first clicked
+    const int io = ig == ia ? ib : ia;                                                  // the object
+    Vec2 pg, po;
+    double ag, ao;
+    bodyPose(ig, pg, ag);
+    bodyPose(io, po, ao);
+    const Body& G = m.bodies[ig];
+    const Body& O = m.bodies[io];
+    // the direction from the ground surface toward the object
+    Vec2 n;
+    if (G.shape.preset == ShapePreset::Line) {
+        n = Rot(ag).apply(Vec2(0, 1));
+        if (dot(n, po - pg) < 0) n = n * -1.0;
+    } else {
+        n = po - pg;
+        double nl2 = length(n);
+        n = nl2 > 1e-9 ? n * (1.0 / nl2) : Vec2(0, -1);
+    }
+    const Vec2 t = Vec2(-n.y, n.x);
+    auto verts = [&](const Body& b, Vec2 p, double a, std::vector<Vec2>& out) {
+        out.clear();
+        if (b.shape.isCircle()) { out.push_back(p + n * -b.shape.radius); out.push_back(p + n * b.shape.radius); out.push_back(p + t * -b.shape.radius); out.push_back(p + t * b.shape.radius); }
+        else if (b.kind == BodyKind::Anchor) { out.push_back(p + t * -0.5); out.push_back(p + t * 0.5); }
+        else { Rot rr(a); for (const Vec2& v : b.shape.verts) out.push_back(p + rr.apply(v)); }
     };
-    double a0, a1, b0, b1;
-    extent(l.a, a0, a1);
-    extent(l.b, b0, b1);
-    double o0 = std::max(a0, b0), o1 = std::min(a1, b1);
-    const double sA = dot(t, wa);
-    if (o1 - o0 < 0.1) { o0 = a0; o1 = a1; }
-    o0 = std::max(o0, sA - 10.0); o1 = std::min(o1, sA + 10.0);                // an indefinite floor: only the stretch near the click
-    if (o1 - o0 < 0.1) { o0 = sA - 0.5; o1 = sA + 0.5; }
-    Vec2 pa, pb;
-    double aa, ab;
-    bodyPose(l.a, pa, aa);
-    bodyPose(l.b, pb, ab);
-    auto loc = [&](int bi, Vec2 base, double s) { Vec2 p; double a; bodyPose(bi, p, a); return Rot(a).applyInv(base + t * (s - sA) - p); };
-    l.la = loc(l.a, wa, o0); l.la2 = loc(l.a, wa, o1);
-    l.lb = loc(l.b, wb, o0); l.lb2 = loc(l.b, wb, o1);
+    std::vector<Vec2> vo, vg;
+    verts(O, po, ao, vo);
+    verts(G, pg, ag, vg);
+    double o0 = 1e18, o1 = -1e18, dObj = 1e18;                                          // the object's extent along the face, and where its face is
+    for (const Vec2& v : vo) { o0 = std::min(o0, dot(t, v)); o1 = std::max(o1, dot(t, v)); dObj = std::min(dObj, dot(n, v)); }
+    double dG = dot(n, pg);                                                             // the ground surface
+    double g0 = -1e18, g1 = 1e18;
+    if (G.shape.preset == ShapePreset::Line) {
+        const double c = dot(t, pg), h = std::min(G.shape.w, 4000.0) * 0.5;
+        g0 = c - h; g1 = c + h;
+    } else {
+        dG = -1e18;
+        g0 = 1e18; g1 = -1e18;
+        for (const Vec2& v : vg) { dG = std::max(dG, dot(n, v)); g0 = std::min(g0, dot(t, v)); g1 = std::max(g1, dot(t, v)); }
+    }
+    double s0 = std::max(o0, g0), s1 = std::min(o1, g1);
+    if (s1 - s0 < 0.1) { s0 = o0; s1 = o1; }                                            // no overlap: just follow the object's face
+    if (s1 - s0 < 0.1) { s0 -= 0.25; s1 += 0.25; }
+    auto world = [&](double d, double sPos) { return n * d + t * sPos; };
+    auto loc = [&](int bi, Vec2 w) { Vec2 p; double a; bodyPose(bi, p, a); return Rot(a).applyInv(w - p); };
+    const Vec2 gA = world(dG, s0), gB = world(dG, s1), oA = world(dObj, s0), oB = world(dObj, s1);
+    const int ga = ig, ob = io;
+    l.a = ga; l.b = ob;
+    l.la = loc(ga, gA); l.la2 = loc(ga, gB);
+    l.lb = loc(ob, oA); l.lb2 = loc(ob, oB);
     l.dist = nextDistMode;
     l.distM = nextDistMode == 2 ? nextSlope : 0.0;
-    if (nextDistMode == 2) { if (l.kind == LinkKind::Spring) l.k = 0; else l.c = 0; }       // y = m x: starts from zero
-    l.L0 = std::max(0.05, len);
+    if (nextDistMode == 2) { if (l.kind == LinkKind::Spring) l.k = 0; else l.c = 0; }       // y = m x: starts from zero at the first end
+    l.L0 = std::max(0.05, dObj - dG);
     l.autoRest = false;
 }
 
@@ -533,7 +554,7 @@ void App::canvasInteract(ImVec2 mp, bool hovered) {
                 Vec2 p;
                 double a;
                 bodyPose(id, p, a);
-                const bool joint = tool == Tool::Pin || tool == Tool::Weld;
+                const bool joint = tool == Tool::Pin || tool == Tool::Weld || tool == Tool::TorsionSpring;
                 const int saveMode = linkAttach;
                 if (joint && linkAttach == 1) linkAttach = 0;                      // a hinge goes exactly where you click
                 Vec2 n1;
@@ -684,7 +705,7 @@ void App::drawCanvas() {
     ImGui::SetNextItemAllowOverlap();                                         // the Run buttons and the deformation controls sit on top of the canvas and must get their clicks
     ImGui::InvisibleButton("canvas", size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
     bool hovered = ImGui::IsItemHovered();
-    if (hovered && (ImGui::IsMouseHoveringRect(overlayMin, overlayMax, false) || ImGui::IsMouseHoveringRect(toolbarMin, toolbarMax, false) || ImGui::IsMouseHoveringRect(promptMin, promptMax, false) || ImGui::IsMouseHoveringRect(zoomMin, zoomMax, false))) hovered = false;   // the deformation controls sit on the canvas
+    if (hovered && (ImGui::IsMouseHoveringRect(overlayMin, overlayMax, false) || ImGui::IsMouseHoveringRect(toolbarMin, toolbarMax, false) || ImGui::IsMouseHoveringRect(promptMin, promptMax, false) || ImGui::IsMouseHoveringRect(zoomMin, zoomMax, false) || ImGui::IsMouseHoveringRect(delMin, delMax, false))) hovered = false;   // the deformation controls sit on the canvas
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->PushClipRect(canvasMin, canvasMax, true);
     modeClock += ImGui::GetIO().DeltaTime;
@@ -1205,9 +1226,9 @@ void App::drawCanvas() {
     }
 
     // ---- overlays
-    const char* toolNames[] = {"Select / move", "Ball", "Block", "Polygon", "Wedge", "Floor line", "Anchor point", "Beam", "Spring", "Damper", "Rigid rod", "Pin joint", "Fixed (weld) joint", "Pin support", "Fixed support (cantilever)", "Roller support"};
+    const char* toolNames[] = {"Select / move", "Ball", "Block", "Polygon", "Wedge", "Floor line", "Anchor point", "Beam", "Spring", "Damper", "Rigid rod", "Pin joint", "Fixed (weld) joint", "Pin support", "Fixed support (cantilever)", "Roller support", "Spring distribution", "Damper distribution", "Torsional spring"};
     char hud[200];
-    std::snprintf(hud, sizeof hud, "Tool: %s", toolNames[(int)tool]);
+    std::snprintf(hud, sizeof hud, "Tool: %s", toolNames[std::min((int)tool, (int)(sizeof toolNames / sizeof toolNames[0]) - 1)]);
     dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 44), pal.text, hud);
     if (tool == Tool::Select) dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 62), pal.dim, state == RunState::Design ? "Click to select, drag to move.  Wheel zooms, right-drag pans." : "Drag a body to push it with the mouse.");
     else if (linkFirst >= 0) dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 62), IM_COL32(90, 205, 255, 255), "Now click the second body.");
@@ -1317,6 +1338,70 @@ void App::drawCanvas() {
         dl->ChannelsMerge();
         promptMin = start;
         promptMax = end;
+    }
+
+    // ---- the small red x next to the selection: Delete, with a confirmation
+    delMin = delMax = ImVec2(0, 0);
+    static bool askDelete = false;
+    if (!(recording && recHideControls) && canEditStructure() && (selBody >= 0 || selLink >= 0)) {
+        ImVec2 anchorPt(0, 0);
+        bool have = false;
+        if (selBody >= 0 && selBody < (int)m.bodies.size()) {
+            Vec2 p;
+            double a;
+            if (bodyPose(selBody, p, a)) {
+                const Body& b = m.bodies[selBody];
+                double x1 = p.x, y0 = p.y;
+                if (b.shape.isCircle()) { x1 = p.x + b.shape.radius; y0 = p.y - b.shape.radius; }
+                else if (b.kind == BodyKind::Anchor) { x1 = p.x + 0.2; y0 = p.y - 0.2; }
+                else if (b.shape.preset == ShapePreset::Line) { x1 = p.x; y0 = p.y; }
+                else { Rot rr(a); x1 = -1e18; y0 = 1e18; for (const Vec2& v : b.shape.verts) { Vec2 q = p + rr.apply(v); x1 = std::max(x1, q.x); y0 = std::min(y0, q.y); } }
+                anchorPt = toScreen(Vec2(x1, y0));
+                have = true;
+            }
+        } else if (selLink >= 0 && selLink < (int)m.links.size()) {
+            const Link& l = m.links[selLink];
+            Vec2 pa, pb;
+            double aa, ab;
+            if (bodyPose(l.a, pa, aa) && bodyPose(l.b, pb, ab)) {
+                ImVec2 sa = toScreen(pa + Rot(aa).apply(l.la)), sb = toScreen(pb + Rot(ab).apply(l.lb));
+                anchorPt = ImVec2((sa.x + sb.x) / 2 + 8, std::min(sa.y, sb.y) - 6);
+                have = true;
+            }
+        }
+        if (have) {
+            ImVec2 pos(std::min(std::max(anchorPt.x + 6, canvasMin.x + 4), canvasMax.x - 26), std::min(std::max(anchorPt.y - 22, canvasMin.y + 4), canvasMax.y - 26));
+            ImGui::SetCursorScreenPos(pos);
+            ImGui::InvisibleButton("##delsel", ImVec2(20, 20));
+            const bool hov = ImGui::IsItemHovered();
+            ImVec2 c(pos.x + 10, pos.y + 10);
+            dl->AddCircleFilled(c, 10, hov ? IM_COL32(235, 70, 70, 255) : IM_COL32(200, 45, 45, 235));
+            dl->AddLine(ImVec2(c.x - 4, c.y - 4), ImVec2(c.x + 4, c.y + 4), IM_COL32(255, 255, 255, 255), 2.0f);
+            dl->AddLine(ImVec2(c.x - 4, c.y + 4), ImVec2(c.x + 4, c.y - 4), IM_COL32(255, 255, 255, 255), 2.0f);
+            if (hov) ImGui::SetTooltip("Delete");
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) { askDelete = true; ImGui::OpenPopup("Delete object?"); }
+            delMin = ImVec2(pos.x - 3, pos.y - 3);
+            delMax = ImVec2(pos.x + 23, pos.y + 23);
+        }
+    }
+    if (askDelete && !(selBody >= 0 || selLink >= 0)) askDelete = false;
+    if (ImGui::BeginPopupModal("Delete object?", &askDelete, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("You sure you want to delete this object?");
+        ImGui::Spacing();
+        if (ImGui::Button("Yes, delete", ImVec2(120, 0))) {
+            if (canEditStructure()) {
+                pushUndo();
+                if (selBody >= 0 && selBody < (int)m.bodies.size()) m.removeBody(selBody);
+                else if (selLink >= 0 && selLink < (int)m.links.size()) m.removeLink(selLink);
+                selBody = -1; selLink = -1;
+                edited();
+            }
+            askDelete = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) { askDelete = false; ImGui::CloseCurrentPopup(); }
+        ImGui::EndPopup();
     }
 
     // ---- run controls (top left of the canvas): Run, Pause, Stop, Step, Compute

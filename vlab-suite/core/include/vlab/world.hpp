@@ -112,6 +112,7 @@ private:
     void distributedForce(const BodyState& s, int i, double t, Vec2& F, double& tau) const;   // total force and torque (about the centre) of the distributed load
     void rebuildExprs();
     std::vector<std::shared_ptr<const Expr>> dexpr_;
+    std::vector<std::shared_ptr<const Expr>> lexpr_, mexpr_;     // time-varying push/pull F(t) and moment M(t)
     void stepSmooth(double h);
     void stepConstrained(double h);
     void buildContacts();

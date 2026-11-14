@@ -576,6 +576,42 @@ void App::drawProperties() {
                 if (b.loadPull) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.17f, 0.40f, 0.88f, 1.0f));
                 if (ImGui::Button("Pull", ImVec2(hw, 0))) { b.loadPull = true; c2 = true; }
                 if (b.loadPull) ImGui::PopStyleColor();
+                static bool momentOpen = false;                                       // the Moment button opens the moment section below
+                ImGui::SameLine();
+                const bool momentSet = b.momentN != 0 || b.momentTimeVar;
+                if (momentOpen || momentSet) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.17f, 0.40f, 0.88f, 1.0f));
+                if (ImGui::Button("Moment", ImVec2(hw, 0))) momentOpen = !momentOpen;
+                if (momentOpen || momentSet) ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Apply a turning moment (torque) to this body.");
+                if (momentOpen || momentSet) {
+                    ImGui::TextUnformatted("Moment (N m)   positive = clockwise on the screen");
+                    if (!b.momentTimeVar) { ImGui::SetNextItemWidth(-1); if (ImGui::InputDouble("##momN", &b.momentN, 5.0, 50.0, "%.2f N m")) { b.momentN = std::clamp(b.momentN, -1.0e7, 1.0e7); c2 = true; } }
+                    if (ImGui::Checkbox("Varies with time  M(t)", &b.momentTimeVar)) c2 = true;
+                    if (b.momentTimeVar) {
+                        char eb[200];
+                        std::snprintf(eb, sizeof eb, "%s", b.momentExpr.c_str());
+                        ImGui::SetNextItemWidth(-1);
+                        if (ImGui::InputText("##momE", eb, sizeof eb)) { b.momentExpr = eb; c2 = true; }
+                        std::string err;
+                        std::shared_ptr<const Expr> ex = Expr::cached(b.momentExpr, &err);
+                        if (!ex) ImGui::TextColored(ImVec4(1, 0.6f, 0.3f, 1), "%s", err.c_str());
+                        else ImGui::TextDisabled("M(0) = %.3g N m,  M(1) = %.3g N m", ex->eval(0, 1, 0), ex->eval(0, 1, 1));
+                        ImGui::TextDisabled("Use t for time in seconds, e.g.  3*t^3 + 2*t^2 + 4   or   20*sin(2*pi*t)");
+                    }
+                    if (b.lockRot) ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1), "This body's rotation is locked, so a moment does nothing.");
+                }
+                ImGui::Checkbox("Push / pull varies with time  F(t)", &b.loadTimeVar) ? c2 = true : false;
+                if (b.loadTimeVar) {
+                    char eb[200];
+                    std::snprintf(eb, sizeof eb, "%s", b.loadExpr.c_str());
+                    ImGui::SetNextItemWidth(-1);
+                    if (ImGui::InputText("##loadE", eb, sizeof eb)) { b.loadExpr = eb; c2 = true; }
+                    std::string err;
+                    std::shared_ptr<const Expr> ex = Expr::cached(b.loadExpr, &err);
+                    if (!ex) ImGui::TextColored(ImVec4(1, 0.6f, 0.3f, 1), "%s", err.c_str());
+                    else ImGui::TextDisabled("F(0) = %.3g N,  F(1) = %.3g N   (Push / Pull and Direction still apply)", ex->eval(0, 1, 0), ex->eval(0, 1, 1));
+                    ImGui::TextDisabled("Use t for time in seconds, e.g.  3*t^3 + 2*t^2 + 0*t + 4   or   100*sin(2*pi*t)");
+                }
                 // the same load in newtons and in kilograms-force: edit either one
                 const double kgPerN = 1.0 / 9.80665;
                 double kg = b.loadN * kgPerN;

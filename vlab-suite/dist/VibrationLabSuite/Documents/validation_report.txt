@@ -1,5 +1,5 @@
 Vibration Lab Suite 1.2 - validation report
-Generated 2026-11-15 01:37
+Generated 2026-11-15 01:54
 ======================================================================
 
 Vibration Lab Suite: validation suite
@@ -129,5 +129,9 @@ Spring distributions and torsional springs
   [PASS] constant spring distribution = k x span        worst error 0.00000 m over 3 s (sqrt(K/m) = 5.000 rad/s)
   [PASS] linear distribution (y = m x) = m span^2 / 2   worst error 0.00000 m over 3 s (sqrt(K/m) = 5.000 rad/s)
   [PASS] torsional spring: quarter period = (pi/2) sqrt(I/kt) first zero at 0.4972 s, theory 0.4973 s
+Moment loads and F(t) / M(t)
+  [PASS] constant moment: omega = M t / I               omega 18.0000, theory 18.0000 rad/s
+  [PASS] F(t) = 3 t^2: v = t^3 / m                      v 0.5000, theory 0.5000 m/s
+  [PASS] M(t) = 4 t: omega = 2 t^2 / I                  omega 6.0000, theory 6.0000 rad/s
 
-89 of 89 checks passed
+92 of 92 checks passed

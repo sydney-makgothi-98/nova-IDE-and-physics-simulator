@@ -774,6 +774,37 @@ static void testDistributionsAndTorsion() {
     }
 }
 
+// ------------------------------------------------------------------ moments and time-varying loads
+static void testMomentsAndTimeLoads() {
+    std::printf("Moment loads and F(t) / M(t)\n");
+    {
+        Model m;
+        m.env.gravity = 0;
+        Body b = withMass(makeBox(1.0, 1.0, M("Steel"), {0, 0}), 2.0);
+        b.momentN = 6.0;
+        m.addBody(b);
+        m.updateMass();
+        World w(m);
+        run(w, 1.0);
+        const double I = m.bodies[0].inertia, expect = 6.0 / I;
+        check("constant moment: omega = M t / I", std::fabs(w.state()[0].omega - expect) / expect < 0.01, "omega %.4f, theory %.4f rad/s", w.state()[0].omega, expect);
+    }
+    {
+        Model m;
+        m.env.gravity = 0;
+        Body b = withMass(makeBox(1.0, 1.0, M("Steel"), {0, 0}), 2.0);
+        b.loadTimeVar = true; b.loadExpr = "3*t^2"; b.loadAngleDeg = 0;
+        b.momentTimeVar = true; b.momentExpr = "4*t";
+        m.addBody(b);
+        m.updateMass();
+        World w(m);
+        run(w, 1.0);
+        const double I = m.bodies[0].inertia;
+        check("F(t) = 3 t^2: v = t^3 / m", std::fabs(w.state()[0].vel.x - 0.5) < 0.005, "v %.4f, theory 0.5000 m/s", w.state()[0].vel.x);
+        check("M(t) = 4 t: omega = 2 t^2 / I", std::fabs(w.state()[0].omega - 2.0 / I) / (2.0 / I) < 0.01, "omega %.4f, theory %.4f rad/s", w.state()[0].omega, 2.0 / I);
+    }
+}
+
 int main() {
     std::printf("Vibration Lab Suite: validation suite\n\n");
     testDeformation();
@@ -789,6 +820,7 @@ int main() {
     testAnalysis();
     testSystem();
     testDistributionsAndTorsion();
+    testMomentsAndTimeLoads();
     std::printf("\n%d of %d checks passed\n", gTotal - gFail, gTotal);
     return gFail ? 1 : 0;
 }

@@ -74,6 +74,11 @@ struct Body {
     double loadN = 0;               // a constant LOAD on the centre of mass: magnitude in newtons (kg-force = N / 9.80665) ...
     double loadAngleDeg = 0;        // ... direction (0 = right, 90 = down) ...
     bool loadPull = false;          // ... and push (false) or pull (true: the same line, the opposite way)
+    bool loadTimeVar = false;       // the push/pull magnitude is F(t) = loadExpr (newtons, t in seconds) instead of the constant loadN
+    std::string loadExpr = "3*t^3 + 2*t^2 + 0*t + 4";
+    double momentN = 0;             // a constant MOMENT on the body, N m (positive = clockwise on the screen)
+    bool momentTimeVar = false;     // the moment is M(t) = momentExpr instead of the constant momentN
+    std::string momentExpr = "20*sin(2*pi*t)";
     double driveT = 0;              // > 0: instead a single half-sine PULSE of this many seconds starting at t = 0 (a gun, a hammer blow)
     unsigned color = 0xFF3574F0;    // ARGB for drawing
 
