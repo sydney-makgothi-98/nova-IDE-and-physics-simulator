@@ -1298,7 +1298,8 @@ void App::drawCanvas() {
     }
     // ---- the small box for connections: where it attaches and which way it runs
     promptMin = promptMax = ImVec2(0, 0);
-    if (!recording && isLinkTool(tool) && tool != Tool::SpringDist && tool != Tool::DamperDist) {
+    if (!recording && isLinkTool(tool)) {
+        const bool distBox = tool == Tool::SpringDist || tool == Tool::DamperDist;
         const bool joint = tool == Tool::Pin || tool == Tool::Weld || tool == Tool::TorsionSpring;
         const char* what = tool == Tool::Spring ? "Spring" : tool == Tool::Damper ? "Damper" : tool == Tool::SpringDist ? "Spring distribution" : tool == Tool::DamperDist ? "Damper distribution" : tool == Tool::TorsionSpring ? "Torsional spring" : tool == Tool::Rod ? "Rigid rod" : tool == Tool::Pin ? "Pin joint" : "Fixed joint";
         ImVec2 pos(canvasMin.x + 10, canvasMin.y + 104);
@@ -1319,6 +1320,21 @@ void App::drawCanvas() {
         ImGui::PushStyleColor(ImGuiCol_Border, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
         ImGui::PushTextWrapPos(pos.x + bw - 12 - ImGui::GetWindowPos().x);
         ImGui::PushItemWidth(bw - 20);
+        if (distBox) {
+            ImGui::TextColored(ImVec4(0.55f, 0.82f, 1.0f, 1.0f), "%s", what);
+            ImGui::TextColored(linkFirst < 0 ? ImVec4(1.0f, 0.84f, 0.47f, 1.0f) : ImVec4(0.6f, 0.9f, 0.65f, 1.0f), "%s Grounded surface", linkFirst < 0 ? ">" : "ok");
+            ImGui::TextColored(linkFirst >= 0 ? ImVec4(1.0f, 0.84f, 0.47f, 1.0f) : ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s Object face", linkFirst >= 0 ? ">" : "-");
+            ImGui::TextUnformatted("Orientation");
+            if (ImGui::RadioButton("Perpendicular", &distOrient, 1)) {}
+            ImGui::SameLine();
+            ImGui::RadioButton("Angled", &distOrient, 2);
+            if (distOrient == 2) {
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(100);
+                ImGui::DragFloat("##dang", &distAngleDeg, 1.0f, -360.0f, 360.0f, "%.0f deg");
+                ImGui::TextDisabled("0 = right, 90 = down");
+            }
+        } else {
         ImGui::TextColored(ImVec4(0.55f, 0.82f, 1.0f, 1.0f), "%s: %s", what, linkFirst < 0 ? "click the first body" : "now click the second body");
         ImGui::TextUnformatted("Attach to");
         ImGui::RadioButton("Edge", &linkAttach, 1); ImGui::SameLine();
@@ -1326,7 +1342,8 @@ void App::drawCanvas() {
         ImGui::RadioButton("Centre", &linkAttach, 3); ImGui::SameLine();
         ImGui::RadioButton("Exact", &linkAttach, 0);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Exact: where you click. Edge: the nearest point of the body's outline.\nKey points: corners, the middle and the thirds of an edge. Centre: the middle of the body.");
-        if (!joint) {
+        }
+        if (!joint && !distBox) {
             ImGui::TextUnformatted("Direction");
             ImGui::RadioButton("Free", &linkDir, 0); ImGui::SameLine();
             ImGui::RadioButton("Perpendicular", &linkDir, 1); ImGui::SameLine();

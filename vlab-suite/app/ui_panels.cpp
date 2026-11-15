@@ -449,21 +449,7 @@ void App::drawSidebar() {
         case Tool::SpringDist:
         case Tool::DamperDist: {
             const bool sp = tool == Tool::SpringDist;
-            ImGui::TextUnformatted("1. Select the grounded surface");
-            ImGui::TextUnformatted("2. Select the object face");
-            ImGui::Separator();
-            ImGui::TextUnformatted("Spring orientation");
-            ImGui::RadioButton("Free", &distOrient, 0);
-            ImGui::SameLine();
-            ImGui::RadioButton("Perpendicular", &distOrient, 1);
-            ImGui::SameLine();
-            ImGui::RadioButton("Angled", &distOrient, 2);
-            if (distOrient == 2) {
-                labelled("Angle (deg: 0 = right, 90 = down)");
-                ImGui::SetNextItemWidth(-1);
-                ImGui::DragFloat("##da", &distAngleDeg, 0.5f, -360.0f, 360.0f, "%.1f deg");
-            }
-            ImGui::Separator();
+            ImGui::TextDisabled("Grounded surface, object face and orientation are set in the box on the canvas.");
             ImGui::RadioButton("Constant", &nextDistMode, 1);
             ImGui::SameLine();
             ImGui::RadioButton("Linear  (y = m x)", &nextDistMode, 2);
