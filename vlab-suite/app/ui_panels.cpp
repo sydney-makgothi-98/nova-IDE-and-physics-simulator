@@ -1382,13 +1382,18 @@ void App::drawData() {
     }
     ImGui::Separator();
 
-    ImGui::TextUnformatted("Schematic diagram");
-    wrapDisabled("The design as a labelled figure: shapes, springs, dampers, supports and loads, each named with a leader line. Saved as an SVG, which opens in a browser, Word or PowerPoint and stays sharp at any size.");
+    ImGui::TextUnformatted("System picture and derivation");
+    wrapDisabled("The design as a labelled figure: shapes, springs, dampers, supports and loads, each named with a leader line. Saved as a JPG or a PDF.");
     ImGui::Checkbox("Names on the parts", &schemNames);
     ImGui::Checkbox("Their values (mass, k, c, loads)", &schemValues);
     ImGui::Checkbox("Arrowheads on the label lines", &schemArrows);
     ImGui::Checkbox("Show the applied loads", &schemLoads);
-    if (ImGui::Button("Save the schematic (.svg)", ImVec2(-1, 34))) exportSchematic();
+    ImGui::SetNextItemWidth(-1);
+    ImGui::Combo("##sheetfmt", &sheetFormat, "Save as JPG\0Save as PDF\0");
+    if (ImGui::Button("1. Image of the system", ImVec2(-1, 34))) exportSheet(false, sheetFormat == 1);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Just the picture, labelled as set by the options above.");
+    if (ImGui::Button("2. Image + specifications + equations", ImVec2(-1, 34))) exportSheet(true, sheetFormat == 1);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("The diagram labelled with variables (m1, k1, c1, F(t) ...), the specifications under it, then the full derivation of the equations of motion.");
     ImGui::Separator();
 
     ImGui::TextUnformatted("Screen recording");

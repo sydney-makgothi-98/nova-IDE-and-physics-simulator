@@ -11,6 +11,7 @@
 #include "encoder.hpp"
 #include "imgui_internal.h"
 #include "report.hpp"
+#include "derivation.hpp"
 #include "schematic.hpp"
 
 namespace vlab {
@@ -334,8 +335,9 @@ void App::advanceRun(float dt) {
 // ====================================================================== exporting
 // ====================================================================== data extraction settings
 // What the Data panel remembers between sessions: where files go, the name, which formats to save by themselves.
-// The design as a labelled figure (SVG): shapes, springs, dampers, supports and loads, each named with a leader line.
-void App::exportSchematic() {
+// The design as a picture (JPG or PDF), or as the full sheet: the diagram labelled with variables, the specifications, and the derivation.
+void App::exportSheet(bool full, bool pdf) {
+    if (design().bodies.empty()) { say("The design is empty: draw something first.", true); return; }
     ensureDirectory(exportsDir);
     SchematicOptions o;
     o.names = schemNames;
@@ -345,11 +347,13 @@ void App::exportSchematic() {
     o.title = design().name;
     std::string base = safeName(exportBase.empty() ? design().name : exportBase);
     if (exportStamp) base += "_" + stamp();
-    const std::string p = exportsDir + "\\" + base + "_schematic.svg";
+    const std::string p = exportsDir + "\\" + base + (full ? "_system_derivation" : "_system") + (pdf ? ".pdf" : ".jpg");
+    say(std::string("Drawing the ") + (full ? "sheet" : "picture") + "...");
+    const Sheet sh = buildSheet(design(), full ? SheetKind::Full : SheetKind::SystemOnly, o);
     std::string err;
-    if (!exportSchematicSvg(p, design(), o, &err)) { say("Could not save the schematic: " + err, true); return; }
+    if (!renderSheet(sh, p, pdf, &err)) { say("Could not save the " + std::string(pdf ? "PDF" : "JPG") + ": " + err, true); return; }
     lastExportPath = p;
-    say("Schematic saved: " + p);
+    say(std::string(pdf ? "PDF" : "JPG") + " saved: " + p);
     openInShell(p, false);
 }
 

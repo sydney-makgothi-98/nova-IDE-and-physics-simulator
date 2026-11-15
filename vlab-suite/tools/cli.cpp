@@ -3,9 +3,11 @@
 //   vlab_cli --example 7 --duration 8 --out bounce.xlsx [--ideal | --realistic] [--csv] [--sample-hz 200]
 //   vlab_cli --file my.vlab --duration 20 --out result.xlsx
 #include <cstdio>
+#include <fstream>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include "../io/derivation.hpp"
 #include "../io/report.hpp"
 #include "vlab/project_io.hpp"
 #include "vlab/session.hpp"
@@ -13,7 +15,7 @@
 using namespace vlab;
 
 int main(int argc, char** argv) {
-    std::string file, out, saveDesignPath;
+    std::string file, out, saveDesignPath, sheet;
     int example = 0;
     double duration = -1, hz = -1;
     bool ideal = false, realistic = false, csv = false, spectrum = false, modal = false;
@@ -36,6 +38,7 @@ int main(int argc, char** argv) {
         else if (a == "--csv") csv = true;
         else if (a == "--spectrum") spectrum = true;
         else if (a == "--modal") modal = true;
+        else if (a == "--sheet") sheet = next();
         else { std::printf("unknown option %s\n", a.c_str()); return 2; }
     }
     Model m;
@@ -54,6 +57,15 @@ int main(int argc, char** argv) {
         bool ok = saveModelFile(saveDesignPath, m);
         std::printf("%s %s\n", ok ? "wrote" : "FAILED to write", saveDesignPath.c_str());
         return ok ? 0 : 1;
+    }
+    if (!sheet.empty()) {                     // the system sheet as JPG / PDF: --sheet system|full --out file.jpg|file.pdf
+        Sheet sh = buildSheet(m, sheet == "full" ? SheetKind::Full : SheetKind::SystemOnly, SchematicOptions());
+        std::string err;
+        if (out.size() > 5 && out.substr(out.size() - 5) == ".html") { std::ofstream(out, std::ios::binary) << sh.html; std::printf("wrote %s\n", out.c_str()); return 0; }   // the page itself (for checking the layout)
+        const bool pdf = out.size() > 4 && out.substr(out.size() - 4) == ".pdf";
+        if (!renderSheet(sh, out, pdf, &err)) { std::printf("FAILED: %s\n", err.c_str()); return 1; }
+        std::printf("wrote %s\n", out.c_str());
+        return 0;
     }
     if (ideal) m.env.setIdeal();
     if (realistic) m.env.setRealistic();
