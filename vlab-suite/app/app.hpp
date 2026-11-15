@@ -87,8 +87,9 @@ struct App {
     std::vector<char> exportSel;         // one flag per telemetry channel (when not all)
     bool autoExportCsv = false, autoExportXlsx = false, autoRecord = false;
     bool schemNames = true, schemValues = true, schemArrows = false, schemLoads = true;   // schematic export options
-    void exportSheet(bool full, bool pdf);   // the system picture (full = + specifications and derivation) as JPG or PDF
-    int sheetFormat = 0;                 // 0 JPG, 1 PDF
+    void exportSheet(bool full, int format);   // the system picture (full = + specifications and derivation); format 0 JPG, 1 PNG, 2 PDF
+    int sheetFormat = 0;                 // 0 JPG, 1 PNG, 2 PDF
+    std::string sheetDir;                // where those pictures are saved (empty: the Exports folder)
     void saveDataSettings();
     void loadDataSettings();
     std::string exportBaseName() const;

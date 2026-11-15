@@ -62,8 +62,9 @@ int main(int argc, char** argv) {
         Sheet sh = buildSheet(m, sheet == "full" ? SheetKind::Full : SheetKind::SystemOnly, SchematicOptions());
         std::string err;
         if (out.size() > 5 && out.substr(out.size() - 5) == ".html") { std::ofstream(out, std::ios::binary) << sh.html; std::printf("wrote %s\n", out.c_str()); return 0; }   // the page itself (for checking the layout)
-        const bool pdf = out.size() > 4 && out.substr(out.size() - 4) == ".pdf";
-        if (!renderSheet(sh, out, pdf, &err)) { std::printf("FAILED: %s\n", err.c_str()); return 1; }
+        const auto ends = [&](const char* e) { const size_t n = std::strlen(e); return out.size() > n && out.substr(out.size() - n) == e; };
+        const SheetFormat fmt = ends(".pdf") ? SheetFormat::Pdf : ends(".png") ? SheetFormat::Png : SheetFormat::Jpg;
+        if (!renderSheet(sh, out, fmt, &err)) { std::printf("FAILED: %s\n", err.c_str()); return 1; }
         std::printf("wrote %s\n", out.c_str());
         return 0;
     }

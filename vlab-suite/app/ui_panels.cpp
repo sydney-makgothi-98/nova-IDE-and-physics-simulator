@@ -1383,16 +1383,18 @@ void App::drawData() {
     ImGui::Separator();
 
     ImGui::TextUnformatted("System picture and derivation");
-    wrapDisabled("The design as a labelled figure: shapes, springs, dampers, supports and loads, each named with a leader line. Saved as a JPG or a PDF.");
+    wrapDisabled("The design as a labelled figure: shapes, springs, dampers, supports and loads, each named with a leader line. Saved as a JPG, PNG or PDF in the folder you choose.");
     ImGui::Checkbox("Names on the parts", &schemNames);
     ImGui::Checkbox("Their values (mass, k, c, loads)", &schemValues);
     ImGui::Checkbox("Arrowheads on the label lines", &schemArrows);
     ImGui::Checkbox("Show the applied loads", &schemLoads);
     ImGui::SetNextItemWidth(-1);
-    ImGui::Combo("##sheetfmt", &sheetFormat, "Save as JPG\0Save as PDF\0");
-    if (ImGui::Button("1. Image of the system", ImVec2(-1, 34))) exportSheet(false, sheetFormat == 1);
+    ImGui::Combo("##sheetfmt", &sheetFormat, "Save as JPG' + B + '0' + 'Save as PNG' + B + '0' + 'Save as PDF' + B + '0' + '");
+    if (sheetDir.empty()) sheetDir = exportsDir;
+    pathRow("Save the pictures in", "##sheetdir", sheetDir);
+    if (ImGui::Button("1. Image of the system", ImVec2(-1, 34))) exportSheet(false, sheetFormat);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Just the picture, labelled as set by the options above.");
-    if (ImGui::Button("2. Image + specifications + equations", ImVec2(-1, 34))) exportSheet(true, sheetFormat == 1);
+    if (ImGui::Button("2. Image + specifications + equations", ImVec2(-1, 34))) exportSheet(true, sheetFormat);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("The diagram labelled with variables (m1, k1, c1, F(t) ...), the specifications under it, then the full derivation of the equations of motion.");
     ImGui::Separator();
 

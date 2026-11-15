@@ -336,9 +336,11 @@ void App::advanceRun(float dt) {
 // ====================================================================== data extraction settings
 // What the Data panel remembers between sessions: where files go, the name, which formats to save by themselves.
 // The design as a picture (JPG or PDF), or as the full sheet: the diagram labelled with variables, the specifications, and the derivation.
-void App::exportSheet(bool full, bool pdf) {
+void App::exportSheet(bool full, int format) {
     if (design().bodies.empty()) { say("The design is empty: draw something first.", true); return; }
-    ensureDirectory(exportsDir);
+    const SheetFormat fmt = format == 2 ? SheetFormat::Pdf : format == 1 ? SheetFormat::Png : SheetFormat::Jpg;
+    const std::string folder = sheetDir.empty() ? exportsDir : sheetDir;
+    if (!ensureDirectory(folder)) { say("Cannot use the folder " + folder + ": choose another one.", true); return; }
     SchematicOptions o;
     o.names = schemNames;
     o.values = schemValues;
@@ -347,13 +349,13 @@ void App::exportSheet(bool full, bool pdf) {
     o.title = design().name;
     std::string base = safeName(exportBase.empty() ? design().name : exportBase);
     if (exportStamp) base += "_" + stamp();
-    const std::string p = exportsDir + "\\" + base + (full ? "_system_derivation" : "_system") + (pdf ? ".pdf" : ".jpg");
+    const std::string p = folder + "\\" + base + (full ? "_system_derivation" : "_system") + sheetExtension(fmt);
     say(std::string("Drawing the ") + (full ? "sheet" : "picture") + "...");
     const Sheet sh = buildSheet(design(), full ? SheetKind::Full : SheetKind::SystemOnly, o);
     std::string err;
-    if (!renderSheet(sh, p, pdf, &err)) { say("Could not save the " + std::string(pdf ? "PDF" : "JPG") + ": " + err, true); return; }
+    if (!renderSheet(sh, p, fmt, &err)) { say("Could not save the picture: " + err, true); return; }
     lastExportPath = p;
-    say(std::string(pdf ? "PDF" : "JPG") + " saved: " + p);
+    say("Saved: " + p);
     openInShell(p, false);
 }
 
@@ -366,7 +368,8 @@ void App::saveDataSettings() {
       << "all=" << (exportAll ? 1 : 0) << "\n"
       << "autocsv=" << (autoExportCsv ? 1 : 0) << "\n"
       << "autoxlsx=" << (autoExportXlsx ? 1 : 0) << "\n"
-      << "autorec=" << (autoRecord ? 1 : 0) << "\n";
+      << "autorec=" << (autoRecord ? 1 : 0) << "\n"
+      << "sheetdir=" << sheetDir << "\n";
 }
 
 void App::loadDataSettings() {
@@ -385,6 +388,7 @@ void App::loadDataSettings() {
         else if (k == "autocsv") autoExportCsv = v != "0";
         else if (k == "autoxlsx") autoExportXlsx = v != "0";
         else if (k == "autorec") autoRecord = v != "0";
+        else if (k == "sheetdir" && !v.empty()) sheetDir = v;
     }
 }
 

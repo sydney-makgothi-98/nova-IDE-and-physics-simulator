@@ -871,19 +871,46 @@ std::string findBrowser() {
     return std::string();
 }
 
-bool runWait(const std::wstring& cmdline, DWORD timeoutMs) {
+// Runs a command with no window. The program has no console of its own, so the child is given explicit standard handles
+// (nothing to read, and a log file for what it prints): a browser started without valid handles can quit at once.
+bool runWait(const std::wstring& cmdline, DWORD timeoutMs, const std::wstring& logPath = std::wstring()) {
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof sa;
+    sa.bInheritHandle = TRUE;
+    HANDLE in = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr);
+    HANDLE out = logPath.empty() ? CreateFileW(L"NUL", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr)
+                                 : CreateFileW(logPath.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     STARTUPINFOW si{};
     si.cb = sizeof si;
-    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.dwFlags = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES;
     si.wShowWindow = SW_HIDE;
+    si.hStdInput = in;
+    si.hStdOutput = out;
+    si.hStdError = out;
     PROCESS_INFORMATION pi{};
     std::wstring c = cmdline;
-    if (!CreateProcessW(nullptr, &c[0], nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) return false;
+    const BOOL ok = CreateProcessW(nullptr, &c[0], nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+    if (in != INVALID_HANDLE_VALUE) CloseHandle(in);
+    if (out != INVALID_HANDLE_VALUE) CloseHandle(out);
+    if (!ok) return false;
     DWORD r = WaitForSingleObject(pi.hProcess, timeoutMs);
     if (r == WAIT_TIMEOUT) TerminateProcess(pi.hProcess, 1);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
     return r != WAIT_TIMEOUT;
+}
+
+// the last few lines of a log, for an error message
+std::string logTail(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    std::stringstream ss;
+    ss << f.rdbuf();
+    std::string t = ss.str();
+    std::string keep;
+    for (char c : t) keep += (c == '\r' ? ' ' : c);
+    if (keep.size() > 300) keep = keep.substr(keep.size() - 300);
+    while (!keep.empty() && (keep.back() == '\n' || keep.back() == ' ')) keep.pop_back();
+    return keep;
 }
 
 std::string fileUrl(const std::string& p) {
@@ -914,7 +941,8 @@ void rmTree(const std::wstring& dir) {
 
 }  // namespace
 
-bool renderSheet(const Sheet& s, const std::string& outPath, bool pdf, std::string* error) {
+bool renderSheet(const Sheet& s, const std::string& outPath, SheetFormat format, std::string* error) {
+    const bool pdf = format == SheetFormat::Pdf;
     auto fail = [&](const std::string& why) { if (error) *error = why; return false; };
     const std::string exe = findBrowser();
     if (exe.empty()) return fail("Microsoft Edge (or Chrome) was not found; it is needed to draw the page as an image or PDF.");
@@ -923,7 +951,7 @@ bool renderSheet(const Sheet& s, const std::string& outPath, bool pdf, std::stri
     GetTempPathA(MAX_PATH, tmp);
     const std::string dir = std::string(tmp) + "vlab_sheet_" + std::to_string(GetTickCount64());
     CreateDirectoryW(widen(dir).c_str(), nullptr);
-    const std::string page = dir + "\\page.html", prof = dir + "\\profile", dom = dir + "\\dom.txt", png = dir + "\\shot.png", ps = dir + "\\convert.ps1";
+    const std::string page = dir + "\\page.html", prof = dir + "\\profile", dom = dir + "\\dom.txt", png = dir + "\\shot.png", ps = dir + "\\convert.ps1", log = dir + "\\browser.log";
     {
         std::ofstream f(page, std::ios::binary);
         if (!f) return fail("cannot write the temporary page");
@@ -935,10 +963,11 @@ bool renderSheet(const Sheet& s, const std::string& outPath, bool pdf, std::stri
 
     if (pdf) {
         const std::string cmd = common + " --no-pdf-header-footer --virtual-time-budget=6000 --print-to-pdf=" + q + outPath + q + " " + q + fileUrl(page) + q;
-        runWait(widen(cmd), 90000);
+        runWait(widen(cmd), 90000, widen(log));
         const bool okPdf = fileExists(outPath);
+        const std::string why = okPdf ? std::string() : logTail(log);
         rmTree(widen(dir));
-        if (!okPdf) return fail("the browser did not produce the PDF");
+        if (!okPdf) return fail("the browser did not produce the PDF" + (why.empty() ? std::string(" (is the folder writable?)") : ": " + why));
         return true;
     }
 
@@ -946,7 +975,7 @@ bool renderSheet(const Sheet& s, const std::string& outPath, bool pdf, std::stri
     int height = 2400;
     {
         const std::string inner = q + common + " --window-size=" + std::to_string(s.width) + ",900 --virtual-time-budget=6000 --dump-dom " + q + fileUrl(page) + q + " > " + q + dom + q + q;
-        runWait(widen("cmd.exe /s /c " + inner), 90000);
+        runWait(widen("cmd.exe /s /c " + inner), 90000, widen(log));
         std::ifstream f(dom, std::ios::binary);
         std::stringstream ss;
         ss << f.rdbuf();
@@ -956,12 +985,12 @@ bool renderSheet(const Sheet& s, const std::string& outPath, bool pdf, std::stri
     }
     const std::string shot = common + " --hide-scrollbars --force-device-scale-factor=2 --default-background-color=FFFFFFFF --window-size=" + std::to_string(s.width) + "," + std::to_string(height + 40)
                              + " --virtual-time-budget=6000 --screenshot=" + q + png + q + " " + q + fileUrl(page) + q;
-    runWait(widen(shot), 90000);
-    if (!fileExists(png)) { rmTree(widen(dir)); return fail("the browser did not produce the picture"); }
+    runWait(widen(shot), 90000, widen(log));
+    if (!fileExists(png)) { const std::string why = logTail(log); rmTree(widen(dir)); return fail("the browser did not produce the picture" + (why.empty() ? std::string() : ": " + why)); }
 
     {
         std::ofstream f(ps, std::ios::binary);
-        f << "param($in,$out)\r\n"
+        f << "param($in,$out,$fmt)\r\n"
              "Add-Type -AssemblyName System.Drawing\r\n"
              "$b = New-Object System.Drawing.Bitmap($in)\r\n"
              "$r = New-Object System.Drawing.Rectangle(0,0,$b.Width,$b.Height)\r\n"
@@ -984,21 +1013,23 @@ bool renderSheet(const Sheet& s, const std::string& outPath, bool pdf, std::stri
              "$enc = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }\r\n"
              "$ep = New-Object System.Drawing.Imaging.EncoderParameters(1)\r\n"
              "$ep.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality,[long]94)\r\n"
-             "$o.Save($out,$enc,$ep)\r\n"
+             "if ($fmt -eq 'png') { $o.Save($out,[System.Drawing.Imaging.ImageFormat]::Png) } else { $o.Save($out,$enc,$ep) }\r\n"
              "$o.Dispose(); $b.Dispose()\r\n";
     }
-    const std::string conv = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File " + q + ps + q + " " + q + png + q + " " + q + outPath + q;
-    runWait(widen(conv), 90000);
+    const std::string conv = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File " + q + ps + q + " " + q + png + q + " " + q + outPath + q + (format == SheetFormat::Png ? " png" : " jpg");
+    runWait(widen(conv), 90000, widen(log));
     DeleteFileA(png.c_str());
     DeleteFileA(ps.c_str());
     DeleteFileA(dom.c_str());
     DeleteFileA(page.c_str());
+    const bool okImg = fileExists(outPath);
+    const std::string why2 = okImg ? std::string() : logTail(log);
     rmTree(widen(dir));
-    if (!fileExists(outPath)) return fail("could not convert the picture to JPG");
+    if (!okImg) return fail(std::string("could not convert the picture to ") + (format == SheetFormat::Png ? "PNG" : "JPG") + (why2.empty() ? std::string() : ": " + why2));
     return true;
 }
 #else
-bool renderSheet(const Sheet&, const std::string&, bool, std::string* error) {
+bool renderSheet(const Sheet&, const std::string&, SheetFormat, std::string* error) {
     if (error) *error = "rendering the sheet needs Windows";
     return false;
 }

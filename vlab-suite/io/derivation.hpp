@@ -21,8 +21,11 @@ struct Sheet {
 // Builds the page. `diagram` only matters for SystemOnly (the Full sheet always labels the parts with variables).
 Sheet buildSheet(const Model& m, SheetKind kind, const SchematicOptions& diagram);
 
-// Renders a page to a JPG or a PDF with the Microsoft Edge (or Chrome) that comes with Windows. Returns false with a reason in *error.
-bool renderSheet(const Sheet& s, const std::string& outPath, bool pdf, std::string* error);
+enum class SheetFormat { Jpg, Png, Pdf };
+inline const char* sheetExtension(SheetFormat f) { return f == SheetFormat::Pdf ? ".pdf" : f == SheetFormat::Png ? ".png" : ".jpg"; }
+
+// Renders a page to a JPG, PNG or PDF with the Microsoft Edge (or Chrome) that comes with Windows. Returns false with a reason in *error.
+bool renderSheet(const Sheet& s, const std::string& outPath, SheetFormat format, std::string* error);
 
 // Pieces exposed for the tests: the math markup -> HTML converter used by the derivation.
 std::string mathMarkup(const std::string& s);
