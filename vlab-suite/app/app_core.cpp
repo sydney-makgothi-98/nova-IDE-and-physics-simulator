@@ -47,7 +47,7 @@ void App::init(Platform* p) {
     std::string seen = docsDir + "\\welcome_seen.txt";
     bool first = !std::ifstream(seen).good();
     std::string err;
-    if (!first && loadModelFile(docsDir + "\\last_session.vlab", m, &err)) ses.setDesign(m);
+    if (!first && loadModelFile(docsDir + "\\last_session.vlab", m, &err)) { m.run.duration = 0; ses.setDesign(m); }     // the run time is indefinite whenever the program starts
     else ses.setDesign(exampleGallery()[0].model);
     showWelcome = false;                     // the Dashboard is the front page now
     if (first) std::ofstream(seen) << "shown";

@@ -563,6 +563,37 @@ void App::drawSidebar() {
 }
 
 // ====================================================================== Properties
+// Builders for time-varying loads: polynomial and trigonometric forms write the formula text; the formula box stays editable.
+static bool timeLoadBuilder(std::string& expr, const char* id, const char* unit) {
+    bool changed = false;
+    ImGui::PushID(id);
+    static float A = 100.0f, w = 6.2832f, ph = 0.0f, off = 0.0f;
+    static float c3 = 3.0f, c2 = 2.0f, c1 = 0.0f, c0 = 4.0f;
+    char b[200];
+    ImGui::TextUnformatted("Trigonometric:  offset + A sin(w t + phase)");
+    ImGui::SetNextItemWidth(-1);
+    ImGui::DragFloat("##A", &A, 1.0f, -1e7f, 1e7f, (std::string("Amplitude A  %.3g ") + unit).c_str());
+    ImGui::SetNextItemWidth(-1);
+    ImGui::DragFloat("##w", &w, 0.05f, 0.0f, 1e5f, "Angular frequency w  %.4g rad/s");
+    ImGui::SetNextItemWidth(-1);
+    ImGui::DragFloat("##ph", &ph, 1.0f, -360.0f, 360.0f, "Phase  %.1f deg");
+    ImGui::SetNextItemWidth(-1);
+    ImGui::DragFloat("##off", &off, 1.0f, -1e7f, 1e7f, (std::string("Offset  %.3g ") + unit).c_str());
+    const float hw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2;
+    if (ImGui::Button("Use sine", ImVec2(hw, 0))) { std::snprintf(b, sizeof b, "%g + %g*sin(%g*t + %g*pi/180)", off, A, w, ph); expr = b; changed = true; }
+    ImGui::SameLine();
+    if (ImGui::Button("Use cosine", ImVec2(hw, 0))) { std::snprintf(b, sizeof b, "%g + %g*cos(%g*t + %g*pi/180)", off, A, w, ph); expr = b; changed = true; }
+    ImGui::TextUnformatted("Polynomial:  a3 t^3 + a2 t^2 + a1 t + a0");
+    const float qw = (ImGui::GetContentRegionAvail().x - 3 * ImGui::GetStyle().ItemSpacing.x) / 4;
+    ImGui::SetNextItemWidth(qw); ImGui::DragFloat("##c3", &c3, 0.1f, -1e6f, 1e6f, "a3 %.3g");
+    ImGui::SameLine(); ImGui::SetNextItemWidth(qw); ImGui::DragFloat("##c2", &c2, 0.1f, -1e6f, 1e6f, "a2 %.3g");
+    ImGui::SameLine(); ImGui::SetNextItemWidth(qw); ImGui::DragFloat("##c1", &c1, 0.1f, -1e6f, 1e6f, "a1 %.3g");
+    ImGui::SameLine(); ImGui::SetNextItemWidth(qw); ImGui::DragFloat("##c0", &c0, 0.1f, -1e6f, 1e6f, "a0 %.3g");
+    if (ImGui::Button("Use polynomial", ImVec2(-1, 0))) { std::snprintf(b, sizeof b, "%g*t^3 + %g*t^2 + %g*t + %g", c3, c2, c1, c0); expr = b; changed = true; }
+    ImGui::PopID();
+    return changed;
+}
+
 void App::drawProperties() {
     Model& m = design();
     auto commit = [&]() { pushUndo(); m.updateMass(); edited(); };
@@ -609,7 +640,8 @@ void App::drawProperties() {
                         std::shared_ptr<const Expr> ex = Expr::cached(b.momentExpr, &err);
                         if (!ex) ImGui::TextColored(ImVec4(1, 0.6f, 0.3f, 1), "%s", err.c_str());
                         else ImGui::TextDisabled("M(0) = %.3g N m,  M(1) = %.3g N m", ex->eval(0, 1, 0), ex->eval(0, 1, 1));
-                        ImGui::TextDisabled("Use t for time in seconds, e.g.  3*t^3 + 2*t^2 + 4   or   20*sin(2*pi*t)");
+                        ImGui::TextDisabled("Or type any formula in t: sin, cos, tan, exp, sqrt, abs, step ...");
+                        if (timeLoadBuilder(b.momentExpr, "mt", "N m")) c2 = true;
                     }
                     if (b.lockRot) ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1), "This body's rotation is locked, so a moment does nothing.");
                 }
@@ -623,7 +655,8 @@ void App::drawProperties() {
                     std::shared_ptr<const Expr> ex = Expr::cached(b.loadExpr, &err);
                     if (!ex) ImGui::TextColored(ImVec4(1, 0.6f, 0.3f, 1), "%s", err.c_str());
                     else ImGui::TextDisabled("F(0) = %.3g N,  F(1) = %.3g N   (Push / Pull and Direction still apply)", ex->eval(0, 1, 0), ex->eval(0, 1, 1));
-                    ImGui::TextDisabled("Use t for time in seconds, e.g.  3*t^3 + 2*t^2 + 0*t + 4   or   100*sin(2*pi*t)");
+                    ImGui::TextDisabled("Or type any formula in t: sin, cos, tan, exp, sqrt, abs, step ...");
+                    if (timeLoadBuilder(b.loadExpr, "lt", "N")) c2 = true;
                 }
                 // the same load in newtons and in kilograms-force: edit either one
                 const double kgPerN = 1.0 / 9.80665;
