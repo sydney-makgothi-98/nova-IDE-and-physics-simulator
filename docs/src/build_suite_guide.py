@@ -1,13 +1,15 @@
 #!/usr/bin/env python
 """Builds the Vibration Lab Suite USER GUIDE (PDF) from docs/src/suite/*.md using the same pipeline as the engine guide."""
+import os
 import build_guide as g
 import build_book as bb
 
 g.TITLE = "Vibration Lab Suite: User Guide"
 g.SUB = "Design a mechanical system, run it for as long as you like, take the data to Excel"
-g.FOOT = "Vibration Lab Suite 1.0: User Guide"
+g.FOOT = "Vibration Lab Suite 1.2: User Guide"
 g.CHAPTER_DIR = "suite"
 g.OUT_NAME = "Vibration Lab Suite - User Guide.pdf"
+g.LAB = os.path.join(g.ROOT, "vlab-suite")      # @@src listings in the suite guide come from the suite's own source tree
 bb.TITLE = g.TITLE
 
 
@@ -29,7 +31,7 @@ def cover():
   </div>
   <div>
     <div style="font-size:22pt;letter-spacing:.2em;text-transform:uppercase;font-weight:bold">by Team NOVA</div>
-    <div style="margin-top:10px;font-size:11pt;font-style:italic">Version 1.0 · 2026</div>
+    <div style="margin-top:10px;font-size:11pt;font-style:italic">Version 1.2 · 2026</div>
     <div style="border-top:2px solid #000;border-bottom:6px solid #000;margin-top:18px;padding:6px 0;font-size:9pt;letter-spacing:.08em;text-transform:uppercase">Springs · dampers · friction · collisions · energy ledger · Excel export · video</div>
   </div>
 </div>"""
@@ -38,7 +40,7 @@ def cover():
 def copyright():
     return """<div style="page-break-before:always;height:232mm;display:flex;flex-direction:column;justify-content:flex-end;text-align:left;font-size:11pt;line-height:1.5">
 <p><b>Vibration Lab Suite: User Guide</b><br>by Team NOVA</p>
-<p>Version 1.0, 2026.</p>
+<p>Version 1.2, 2026.</p>
 <p>All screenshots were taken from the real program. Charts shown from Excel were exported by Microsoft Excel from workbooks that the program created. Every number quoted from the validation suite was produced by running it.</p>
 <p>Excel and Windows are trademarks of Microsoft. Unreal Engine is a trademark of Epic Games. Other names belong to their owners.</p>
 <p>Set in Times New Roman, 12 point, with 1.5 line spacing.</p></div>"""

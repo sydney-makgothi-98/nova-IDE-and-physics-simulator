@@ -21,7 +21,7 @@ std::string modelToText(const Model& m) {
     const Environment& e = m.env;
     o << "env\t" << e.gravity << "\t" << e.realistic << "\t" << e.collisions << "\t" << e.friction << "\t" << e.inelastic << "\t"
       << e.rolling << "\t" << e.damping << "\t" << e.airDrag << "\t" << e.drag1 << "\t" << e.drag2 << "\t" << (int)e.muCombine << "\t"
-      << (int)e.eCombine << "\t" << e.restThreshold << "\t" << e.solverIterations << "\t" << e.dt << "\n";
+      << (int)e.eCombine << "\t" << e.restThreshold << "\t" << e.solverIterations << "\t" << e.dt << "\t" << e.deadLoad << "\t" << e.deltaT << "\n";
     o << "run\t" << m.run.duration << "\t" << m.run.sampleHz << "\n";
     for (const Body& b : m.bodies) {
         o << "body\t" << clean(b.name) << "\t" << (int)b.kind << "\t" << (int)b.shape.preset << "\t" << b.shape.radius << "\t"
@@ -29,12 +29,12 @@ std::string modelToText(const Model& m) {
           << b.mat.muS << "\t" << b.mat.muK << "\t" << b.mat.restitution << "\t" << b.mat.rollRes << "\t" << b.massFromDensity << "\t"
           << b.mass << "\t" << b.pos.x << "\t" << b.pos.y << "\t" << b.angle << "\t" << b.vel.x << "\t" << b.vel.y << "\t" << b.omega
           << "\t" << b.lockX << "\t" << b.lockY << "\t" << b.lockRot << "\t" << b.driveF << "\t" << b.driveAngleDeg << "\t" << b.driveW
-          << "\t" << b.color << "\t" << b.collide << "\t" << b.mat.youngs << "\t" << b.driveT << "\n";
+          << "\t" << b.color << "\t" << b.collide << "\t" << b.mat.youngs << "\t" << b.driveT << "\t" << b.loadN << "\t" << b.loadAngleDeg << "\t" << b.loadPull << "\t" << b.dloadType << "\t" << b.dloadN << "\t" << b.dloadAngleDeg << "\t" << b.dloadX0 << "\t" << b.dloadX1 << "\t" << clean(b.dloadExpr) << "\t" << b.secType << "\t" << b.secB << "\t" << b.secH << "\t" << b.secTf << "\t" << b.secTw << "\t" << b.tempDelta << "\t" << b.tempGrad << "\t" << b.mat.alphaT << "\t" << b.momentN << "\t" << b.momentTimeVar << "\t" << clean(b.momentExpr) << "\t" << b.loadTimeVar << "\t" << clean(b.loadExpr) << "\n";
     }
     for (const Link& l : m.links) {
         o << "link\t" << (int)l.kind << "\t" << l.a << "\t" << l.b << "\t" << l.la.x << "\t" << l.la.y << "\t" << l.lb.x << "\t" << l.lb.y
           << "\t" << l.k << "\t" << l.k3 << "\t" << l.L0 << "\t" << l.autoRest << "\t" << l.c << "\t" << l.collideConnected << "\t" << l.refAngle << "\t" << l.jointC << "\t" << l.motorTorque
-          << "\t" << l.motorAmp << "\t" << l.motorW << "\n";
+          << "\t" << l.motorAmp << "\t" << l.motorW << "\t" << l.kt << "\t" << l.dist << "\t" << l.la2.x << "\t" << l.la2.y << "\t" << l.lb2.x << "\t" << l.lb2.y << "\t" << l.distM << "\n";
     }
     return o.str();
 }
@@ -73,10 +73,12 @@ bool modelFromText(const std::string& text, Model& out, std::string* error) {
             e.inelastic = num(f, 5) != 0; e.rolling = num(f, 6) != 0; e.damping = num(f, 7) != 0; e.airDrag = num(f, 8) != 0;
             e.drag1 = num(f, 9); e.drag2 = num(f, 10); e.muCombine = (Combine)(int)num(f, 11); e.eCombine = (Combine)(int)num(f, 12, 3);
             e.restThreshold = num(f, 13, 0.25); e.solverIterations = (int)num(f, 14, 14); e.dt = num(f, 15, 0.00025);
+            e.deadLoad = num(f, 16, 0) != 0;
+            e.deltaT = num(f, 17, 0);
             if (e.dt < 1e-5) e.dt = 1e-5;
             if (e.dt > 0.005) e.dt = 0.005;
         } else if (k == "run") {
-            m.run.duration = num(f, 1, 10);
+            m.run.duration = num(f, 1, 0);
             m.run.sampleHz = num(f, 2, 100);
         } else if (k == "body" && f.size() >= 28) {
             Body b;
@@ -95,6 +97,29 @@ bool modelFromText(const std::string& text, Model& out, std::string* error) {
             if (const Material* lm = findMaterial(b.mat.name)) b.mat.youngs = lm->youngs;     // older files: take the stiffness from the named material
             if (f.size() > 30 && num(f, 30, 0) > 0) b.mat.youngs = num(f, 30, b.mat.youngs);
             if (f.size() > 31) b.driveT = num(f, 31, 0);
+            if (f.size() > 32) b.loadN = num(f, 32, 0);
+            if (f.size() > 33) b.loadAngleDeg = num(f, 33, 0);
+            if (f.size() > 34) b.loadPull = num(f, 34, 0) != 0;
+            if (f.size() > 35) b.dloadType = (int)num(f, 35, 0);
+            if (f.size() > 36) b.dloadN = num(f, 36, 0);
+            if (f.size() > 37) b.dloadAngleDeg = num(f, 37, 90);
+            if (f.size() > 38) b.dloadX0 = num(f, 38, 0);
+            if (f.size() > 39) b.dloadX1 = num(f, 39, -1);
+            if (f.size() > 40 && !f[40].empty()) b.dloadExpr = f[40];
+            if (const Material* lm2 = findMaterial(b.mat.name)) b.mat.alphaT = lm2->alphaT;          // older files: the expansion coefficient of the named material
+            if (f.size() > 41) b.secType = (int)num(f, 41, 0);
+            if (f.size() > 42) b.secB = num(f, 42, 0.10);
+            if (f.size() > 43) b.secH = num(f, 43, 0.20);
+            if (f.size() > 44) b.secTf = num(f, 44, 0.012);
+            if (f.size() > 45) b.secTw = num(f, 45, 0.008);
+            if (f.size() > 46) b.tempDelta = num(f, 46, 0);
+            if (f.size() > 47) b.tempGrad = num(f, 47, 0);
+            if (f.size() > 48 && num(f, 48, 0) != 0) b.mat.alphaT = num(f, 48, b.mat.alphaT);
+            if (f.size() > 49) b.momentN = num(f, 49, 0);
+            if (f.size() > 50) b.momentTimeVar = num(f, 50, 0) != 0;
+            if (f.size() > 51 && !f[51].empty()) b.momentExpr = f[51];
+            if (f.size() > 52) b.loadTimeVar = num(f, 52, 0) != 0;
+            if (f.size() > 53 && !f[53].empty()) b.loadExpr = f[53];
             m.bodies.push_back(b);
         } else if (k == "link" && f.size() >= 14) {
             Link l;
@@ -104,6 +129,7 @@ bool modelFromText(const std::string& text, Model& out, std::string* error) {
             l.k = num(f, 8, 50); l.k3 = num(f, 9); l.L0 = num(f, 10, 1); l.autoRest = num(f, 11) != 0; l.c = num(f, 12, 1);
             l.collideConnected = num(f, 13) != 0;
             l.refAngle = num(f, 14); l.jointC = num(f, 15); l.motorTorque = num(f, 16); l.motorAmp = num(f, 17); l.motorW = num(f, 18);
+            l.kt = num(f, 19); l.dist = (int)num(f, 20); l.la2 = Vec2(num(f, 21), num(f, 22)); l.lb2 = Vec2(num(f, 23), num(f, 24)); l.distM = num(f, 25);
             m.links.push_back(l);
         }
     }
@@ -188,7 +214,6 @@ Example oneDof() {
     int mb = add(m, b, "Mass");
     spring(m, a, mb, 30, 2.0);
     damper(m, a, mb, 1.5);
-    m.run.duration = 12;
     return e;
 }
 Example twoDof() {
@@ -208,7 +233,6 @@ Example twoDof() {
     spring(m, g1, a, 40); damper(m, g1, a, 0.6);
     spring(m, a, b, 25);  damper(m, a, b, 0.2);
     spring(m, b, g2, 40); damper(m, b, g2, 0.6);
-    m.run.duration = 12;
     return e;
 }
 Example pendulum() {
@@ -224,7 +248,6 @@ Example pendulum() {
     int mb = add(m, b, "Bob");
     spring(m, a, mb, 60, 2.0);
     damper(m, a, mb, 0.25);
-    m.run.duration = 15;
     return e;
 }
 Example rodPendulum() {
@@ -242,7 +265,6 @@ Example rodPendulum() {
     int mb = add(m, b, "Bob");
     int j = m.addLink(LinkKind::Rod, a, mb, m.bodies[a].pos, m.bodies[mb].pos);
     if (j >= 0) m.links[j].L0 = 2.0;
-    m.run.duration = 12;
     return e;
 }
 Example quarterCar() {
@@ -262,7 +284,6 @@ Example quarterCar() {
     spring(m, road, wi, 220);
     spring(m, wi, ci, 70);
     damper(m, wi, ci, 5.0);
-    m.run.duration = 8;
     return e;
 }
 Example bounce() {
@@ -272,12 +293,11 @@ Example bounce() {
     Model& m = e.model;
     m.name = "Bouncing ball";
     m.env.setRealistic();
-    Body fl = makeFloor(10, 0, mat("Concrete"), {0, 2.0});
+    Body fl = makeFloor(20000, 0, mat("Concrete"), {0, 2.0});
     add(m, fl, "Floor");
     Body b = makeCircle(0.25, mat("Rubber"), {0, 2.0 - 0.25 - 2.0});
     b.mass = 0.5;
     add(m, b, "Ball");
-    m.run.duration = 8;
     return e;
 }
 Example incline() {
@@ -287,7 +307,7 @@ Example incline() {
     Model& m = e.model;
     m.name = "Friction on an incline";
     m.env.setRealistic();
-    Body ramp = makeFloor(10, 28, mat("Wood"), {0, 1.2});
+    Body ramp = makeFloor(20000, 28, mat("Wood"), {0, 1.2});
     ramp.pos += Rot(ramp.angle).apply(Vec2(0, -0.15));
     int r = add(m, ramp, "Ramp");
     const char* mats[4] = {"Rubber", "Steel", "Wood", "Ice"};
@@ -300,7 +320,6 @@ Example incline() {
     }
     Body stop = makeFloor(3.0, 90, mat("Concrete"), {5.0, 4.5});
     add(m, stop, "Wall");
-    m.run.duration = 6;
     return e;
 }
 Example billiards() {
@@ -320,7 +339,6 @@ Example billiards() {
     a.vel = {4.0, 0};
     add(m, a, "Cue ball");
     add(m, b, "Target ball");
-    m.run.duration = 6;
     return e;
 }
 Example rolling() {
@@ -330,7 +348,7 @@ Example rolling() {
     Model& m = e.model;
     m.name = "Rolling ball";
     m.env.setRealistic();
-    Body ramp = makeFloor(10, 20, mat("Concrete"), {0, 1.0});
+    Body ramp = makeFloor(20000, 20, mat("Concrete"), {0, 1.0});
     ramp.pos += Rot(ramp.angle).apply(Vec2(0, -0.15));
     int r = add(m, ramp, "Ramp");
     Body ball = makeCircle(0.3, mat("Steel"), {});
@@ -338,7 +356,6 @@ Example rolling() {
     ball.pos = onSlope(m.bodies[r], 0.3, -3.5);
     add(m, ball, "Ball");
     add(m, makeFloor(3.0, 90, mat("Concrete"), {5.0, 3.0}), "Wall");
-    m.run.duration = 6;
     return e;
 }
 Example tmd() {
@@ -353,13 +370,13 @@ Example tmd() {
     Body p = makeBox(1.0, 0.8, mat("Steel"), {0, 0}), s = makeBox(0.5, 0.5, mat("Aluminium"), {2.0, 0});
     p.mass = 10.0; s.mass = 1.0;
     rail(p); rail(s);
+    p.collide = s.collide = true;                              // the masses must respect walls, floors and each other
     p.driveF = 5.0; p.driveW = std::sqrt(400.0 / 10.0);
     int pi = add(m, p, "Main mass"), si = add(m, s, "Absorber");
     spring(m, g, pi, 400);
     damper(m, g, pi, 1.0);
     spring(m, pi, si, 40);
     damper(m, pi, si, 0.8);
-    m.run.duration = 40;
     m.run.sampleHz = 50;
     return e;
 }
@@ -379,7 +396,6 @@ Example stackOfBoxes() {
     Body blk = makeBox(0.6, 0.6, mat("Steel"), {0.1, -1.2});
     blk.mass = 2.0;
     add(m, blk, "Block");
-    m.run.duration = 8;
     return e;
 }
 // ---- structures: beams, supports, mechanisms
@@ -390,11 +406,10 @@ Example beamFalls() {
     Model& m = e.model;
     m.name = "Unsupported beam";
     m.env.setRealistic();
-    add(m, makeFloor(10, 0, mat("Concrete"), {0, 2.0}), "Floor");
+    add(m, makeFloor(20000, 0, mat("Concrete"), {0, 2.0}), "Floor");
     Body b = makeBeam(3.0, 0.15, mat("Wood"), {0, 0.2});
     b.angle = 0.25;
     add(m, b, "Beam");
-    m.run.duration = 5;
     return e;
 }
 Example pinnedBeam() {
@@ -409,7 +424,6 @@ Example pinnedBeam() {
     b.massFromDensity = false; b.mass = 5.0;
     int bi = add(m, b, "Beam");
     m.addSupport(LinkKind::Pin, bi, {-3.0, 0.0}, 0);
-    m.run.duration = 8;
     return e;
 }
 Example simplySupported() {
@@ -427,7 +441,6 @@ Example simplySupported() {
     Body blk = makeBox(0.5, 0.5, mat("Concrete"), {0, -0.1 - 0.25});
     blk.massFromDensity = false; blk.mass = 30.0;
     add(m, blk, "Load");
-    m.run.duration = 6;
     return e;
 }
 Example cantilever() {
@@ -445,7 +458,6 @@ Example cantilever() {
     blk.massFromDensity = false; blk.mass = 25.0;
     int ki = add(m, blk, "Tip load");
     m.addLink(LinkKind::Weld, bi, ki, {2.8, -0.075}, {2.8, -0.075});
-    m.run.duration = 5;
     return e;
 }
 Example springAssembly() {
@@ -466,7 +478,6 @@ Example springAssembly() {
     spring(m, ia, ib, 50);  damper(m, ia, ib, 0.5);
     spring(m, ia, ic, 60);  damper(m, ia, ic, 0.6);
     spring(m, ib, ic, 60);  damper(m, ib, ic, 0.6);
-    m.run.duration = 15;
     return e;
 }
 Example gantryCrane() {
@@ -476,7 +487,7 @@ Example gantryCrane() {
     Model& m = e.model;
     m.name = "Gantry crane";
     m.env.setRealistic();
-    add(m, makeFloor(14, 0, mat("Concrete"), {0, 3.0}), "Ground");
+    add(m, makeFloor(20000, 0, mat("Concrete"), {0, 3.0}), "Ground");
     Body p1 = makeBox(0.25, 4.0, mat("Steel"), {-3.0, 1.0}), p2 = makeBox(0.25, 4.0, mat("Steel"), {3.0, 1.0});
     p1.massFromDensity = p2.massFromDensity = false;
     p1.mass = p2.mass = 60;
@@ -501,7 +512,6 @@ Example gantryCrane() {
     int il = add(m, ld, "Load");
     int j = m.addLink(LinkKind::Rod, it, il, {0, -0.8}, {0, 0.9});
     (void)j;
-    m.run.duration = 20;
     return e;
 }
 Example roboticArm() {
@@ -511,7 +521,7 @@ Example roboticArm() {
     Model& m = e.model;
     m.name = "Robotic arm";
     m.env.setRealistic();
-    add(m, makeFloor(6, 0, mat("Concrete"), {0, 3.2}), "Ground");
+    add(m, makeFloor(20000, 0, mat("Concrete"), {0, 3.2}), "Ground");
     Body l1 = makeBeam(1.4, 0.14, mat("Aluminium"), {0.7, 0});
     l1.massFromDensity = false; l1.mass = 6;
     int a1 = add(m, l1, "Upper arm");
@@ -526,7 +536,6 @@ Example roboticArm() {
     m.addLink(LinkKind::Weld, a2, a3, {2.5, 0.0}, {2.5, 0.0});
     if (sh >= 0) { m.links[sh].motorTorque = -200; m.links[sh].motorAmp = 45; m.links[sh].motorW = 1.0; m.links[sh].jointC = 25; }
     if (el >= 0) { m.links[el].motorTorque = -65; m.links[el].motorAmp = 18; m.links[el].motorW = 1.7; m.links[el].jointC = 10; m.links[el].collideConnected = false; }
-    m.run.duration = 15;
     return e;
 }
 // ---- five bigger machines
@@ -539,7 +548,7 @@ Example carSuspension() {
     m.env.setRealistic();
     m.env.eCombine = Combine::Min;
     const double v0 = 5.0, roadY = 3.0, r = 0.32;
-    add(m, makeFloor(44, 0, mat("Concrete"), {16, roadY}), "Road");
+    add(m, makeFloor(20000, 0, mat("Concrete"), {16, roadY}), "Road");
     int nb = 0;
     for (double bx : {7.0, 14.0}) {
         Body bp = makeCircle(0.8, mat("Concrete"), {bx, roadY + 0.8 - 0.22});    // a round hump 0.22 m high
@@ -570,27 +579,26 @@ Example carSuspension() {
         int d = m.addLink(LinkKind::Damper, ic, ia, {dx, 1.9}, {dx, armY(dx)});
         if (d >= 0) m.links[d].c = 4000;
     }
-    m.run.duration = 6;
     m.run.sampleHz = 200;
     return e;
 }
 Example railgun() {
     Example e{"Railgun firing and recoiling",
-              "A 2 kg slug is driven down a rail housing by a single 80 ms pulse of force (Properties > Pulse length). Newton's third law pushes the 60 kg housing the other way, "
-              "and its recoil spring and damper bring it back to rest. The slug then hits a clay target on springs. Plot the three x positions, compare the momenta, and read the Energy ledger "
-              "for the impact loss.", {}};
+              "A 2 kg slug rides on the rail housing and is driven along it by a single 80 ms pulse of force (Properties > Pulse length). Newton's third law pushes the 60 kg housing the other way, "
+              "and its recoil spring and damper bring it back to rest. The slug leaves the muzzle, drops under gravity, strikes a clay target on springs and then slides down to the ground. "
+              "Plot the x positions, compare the momenta, and read the Energy ledger for the impact loss.", {}};
     Model& m = e.model;
     m.name = "Railgun";
     m.env.setRealistic();
     m.env.eCombine = Combine::Min;
-    add(m, makeFloor(18, 0, mat("Concrete"), {3.0, 0.9}), "Ground");
+    add(m, makeFloor(20000, 0, mat("Concrete"), {3.0, 0.9}), "Ground");
     Body hs = makeBox(3.0, 0.3, mat("Steel"), {0, 0});
-    hs.massFromDensity = false; hs.mass = 60; hs.lockY = true; hs.lockRot = true; hs.collide = false;
+    hs.massFromDensity = false; hs.mass = 60; hs.lockY = true; hs.lockRot = true;          // the housing is the rail: the slug rides on its top
     hs.driveF = 1000; hs.driveAngleDeg = 180; hs.driveT = 0.08;               // the reaction: equal and opposite, same pulse
     hs.color = 0xFF6A7488;
     int ih = add(m, hs, "Housing");
-    Body sl = makeBox(0.35, 0.12, mat("Steel"), {-1.1, 0});
-    sl.massFromDensity = false; sl.mass = 2; sl.lockY = true; sl.lockRot = true;
+    Body sl = makeBox(0.35, 0.12, mat("Teflon (PTFE)"), {-1.1, -0.15 - 0.06});         // free to fall once it leaves the rail
+    sl.massFromDensity = false; sl.mass = 2; sl.lockRot = true;
     sl.driveF = 1000; sl.driveAngleDeg = 0; sl.driveT = 0.08;
     sl.color = 0xFFE8B04A;
     add(m, sl, "Slug");
@@ -608,7 +616,6 @@ Example railgun() {
     if (s2 >= 0) m.links[s2].k = 800;
     int d2 = m.addLink(LinkKind::Damper, it, w4, {6.25, 0.3}, {9.5, 0.3});
     if (d2 >= 0) m.links[d2].c = 120;
-    m.run.duration = 4;
     m.run.sampleHz = 400;
     return e;
 }
@@ -641,7 +648,6 @@ Example truckOnBridge() {
         int iw = add(m, w, k == 0 ? "Rear wheel" : "Front wheel");
         m.addLink(LinkKind::Pin, ic, iw, {wx, top - r}, {wx, top - r});
     }
-    m.run.duration = 8;
     m.run.sampleHz = 100;
     return e;
 }
@@ -676,7 +682,6 @@ Example crankEngine() {
     m.addLink(LinkKind::Pin, icr, ird, tip, tip);
     m.addLink(LinkKind::Pin, ird, ip, pist, pist);
     if (bearing >= 0) { m.links[bearing].motorTorque = 25; m.links[bearing].jointC = 3.0; }
-    m.run.duration = 10;
     m.run.sampleHz = 200;
     return e;
 }
@@ -690,7 +695,7 @@ Example catapult() {
     m.env.setRealistic();
     m.env.eCombine = Combine::Min;
     const double floorY = 3.0;
-    add(m, makeFloor(16, 0, mat("Concrete"), {0.0, floorY}), "Ground");
+    add(m, makeFloor(20000, 0, mat("Concrete"), {0.0, floorY}), "Ground");
     const Vec2 pivot(-3.6, -0.55);
     const double rod = 3.2, a0 = 0.95;                                              // starts 0.95 rad (54 deg) to the left of straight down
     int anc = m.addBody(makeAnchor(pivot));
@@ -710,7 +715,6 @@ Example catapult() {
     Body b2 = makeCircle(0.2, mat("Rubber"), {3.25, floorY - 0.2});
     b2.massFromDensity = false; b2.mass = 1.5; b2.color = 0xFF55B1E0;
     add(m, b2, "Target ball");
-    m.run.duration = 8;
     m.run.sampleHz = 100;
     return e;
 }

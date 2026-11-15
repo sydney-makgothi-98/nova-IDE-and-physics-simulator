@@ -15,7 +15,7 @@ static const char* kindName(LinkKind k) {
 void Telemetry::clear() {
     t.clear();
     for (auto& c : col) c.clear();
-    for (auto& d : deform) d.w.clear();
+    for (auto& d : deform) { d.w.clear(); d.m.clear(); d.v.clear(); d.q.clear(); d.pl.clear(); }
 }
 
 void Telemetry::begin(const Model& m) {
@@ -45,7 +45,7 @@ void Telemetry::begin(const Model& m) {
         ds.beam = isBeamBody(b);
         ds.E = b.mat.youngs;
         ds.length = ds.beam ? b.shape.w : 0.0;
-        if (ds.beam) ds.fe.build((int)bi, b);
+        if (ds.beam) ds.fe.build((int)bi, b, m.env.deltaT);
         ds.chanDeform = (int)channels.size();
         add(b.name, ds.beam ? "deflection" : "compression", "m");
         ds.chanLoad = (int)channels.size();
@@ -109,8 +109,18 @@ void Telemetry::append(const World& w) {
             if (ds.beam) {
                 Deflection d;
                 beamDeflection(w, ds.fe, d);
+                ds.restrained = d.restrained; ds.axialSigma = d.axialSigma; ds.epsT = d.epsT;
                 put(d.maxSigned);
                 put(d.load);
+                const size_t nodes = ds.fe.x.size();
+                auto pushN = [&](std::vector<float>& dst, const std::vector<double>& src) { for (size_t k = 0; k < nodes; ++k) dst.push_back(k < src.size() ? (float)src[k] : 0.0f); };
+                pushN(ds.m, d.M);
+                pushN(ds.v, d.V);
+                pushN(ds.q, d.q);
+                for (int k = 0; k < 8; ++k) {
+                    ds.pl.push_back(k < (int)d.pts.size() ? (float)d.pts[k].x : 0.0f);
+                    ds.pl.push_back(k < (int)d.pts.size() ? (float)d.pts[k].P : 0.0f);
+                }
                 for (double v : d.w) ds.w.push_back((float)v);
                 if (d.w.size() != ds.fe.x.size()) ds.w.resize(ds.w.size() + ds.fe.x.size() - d.w.size(), 0.0f);
             } else {

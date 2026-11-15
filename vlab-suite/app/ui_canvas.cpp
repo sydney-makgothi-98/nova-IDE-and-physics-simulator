@@ -1104,6 +1104,49 @@ void App::drawCanvas() {
                 std::snprintf(lb, sizeof lb, "%s %.0f N (%.1f kg)", b.loadPull ? "pull" : "push", b.loadN, b.loadN / 9.80665);
                 dl->AddText(ImVec2(tip.x + 6, tip.y - 8), lc, lb);
             }
+            auto shortExpr = [](const std::string& e) { return e.size() > 38 ? e.substr(0, 36) + ".." : e; };
+            const double tNow = ses.hasWorld() ? ses.simTime() : 0.0;
+            if (b.isDynamic() && b.loadTimeVar) {                                    // a time-varying push or pull: arrow, formula and the value right now
+                std::shared_ptr<const Expr> ex = Expr::cached(b.loadExpr);
+                const double now = ex ? ex->eval(0, 1, tNow) : 0.0;
+                const bool live = ses.hasWorld();
+                double a = (b.loadAngleDeg + (b.loadPull ? 180.0 : 0.0)) * kPi / 180.0;
+                const double mag = live ? std::fabs(now) : 0.0;
+                float len = live ? 40.0f + 22.0f * (float)std::log10(1.0 + mag / 10.0) : 56.0f;
+                if (live && now < 0) a += kPi;                                          // the formula went negative: the push reverses
+                ImVec2 tip(c.x + (float)std::cos(a) * len, c.y + (float)std::sin(a) * len);
+                ImU32 lc = IM_COL32(255, 150, 40, 255);
+                drawArrow(dl, c, tip, lc);
+                char lb[160];
+                if (live) std::snprintf(lb, sizeof lb, "%s F(t) = %s   now %.1f N", b.loadPull ? "pull" : "push", shortExpr(b.loadExpr).c_str(), std::fabs(now));
+                else std::snprintf(lb, sizeof lb, "%s F(t) = %s", b.loadPull ? "pull" : "push", shortExpr(b.loadExpr).c_str());
+                dl->AddText(ImVec2(tip.x + 6, tip.y - 8), lc, lb);
+            }
+            if (b.isDynamic() && (b.momentN != 0 || b.momentTimeVar)) {                   // a moment: a curved arrow round the centre and its label
+                double Mv = b.momentN;
+                if (b.momentTimeVar) { std::shared_ptr<const Expr> ex = Expr::cached(b.momentExpr); Mv = ex ? ex->eval(0, 1, tNow) : 0.0; }
+                const bool cw = Mv >= 0 || (b.momentTimeVar && !ses.hasWorld());
+                ImU32 mc = IM_COL32(120, 200, 255, 255);
+                const float R = 26.0f;
+                ImVec2 prev;
+                for (int q = 0; q <= 18; ++q) {
+                    float ang = -2.4f + (cw ? 1.0f : -1.0f) * q * 0.2f * (cw ? 1.0f : 1.0f);
+                    ImVec2 pt(c.x + R * std::cos(ang), c.y + R * std::sin(ang));
+                    if (q) dl->AddLine(prev, pt, mc, 2.2f);
+                    prev = pt;
+                    if (q == 18) {
+                        float tang = ang + (cw ? 1.0f : -1.0f) * 1.5708f;
+                        ImVec2 d(std::cos(tang), std::sin(tang)), nrm(-d.y, d.x);
+                        dl->AddTriangleFilled(ImVec2(pt.x + d.x * 8, pt.y + d.y * 8), ImVec2(pt.x + nrm.x * 4, pt.y + nrm.y * 4), ImVec2(pt.x - nrm.x * 4, pt.y - nrm.y * 4), mc);
+                    }
+                }
+                char mb[160];
+                if (b.momentTimeVar) {
+                    if (ses.hasWorld()) std::snprintf(mb, sizeof mb, "moment M(t) = %s   now %+.1f N m", shortExpr(b.momentExpr).c_str(), Mv);
+                    else std::snprintf(mb, sizeof mb, "moment M(t) = %s", shortExpr(b.momentExpr).c_str());
+                } else std::snprintf(mb, sizeof mb, "moment %+.1f N m (%s)", b.momentN, b.momentN >= 0 ? "clockwise" : "counter-clockwise");
+                dl->AddText(ImVec2(c.x + R + 10, c.y + 6), mc, mb);
+            }
             if (showVectors && ses.hasWorld() && b.isDynamic()) {
                 const BodyState& s = ses.world()->state()[i];
                 drawArrow(dl, c, toScreen(p + s.vel * 0.25), IM_COL32(80, 220, 120, 255));

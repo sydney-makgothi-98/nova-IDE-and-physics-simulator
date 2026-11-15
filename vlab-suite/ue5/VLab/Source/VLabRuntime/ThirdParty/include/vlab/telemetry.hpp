@@ -20,7 +20,11 @@ struct DeformSeries {
     bool beam = false;
     BeamFE fe;                                   // beams: nodes, E, I, L
     std::vector<float> w;                        // beams: rows x nodes, deflection (m) at each node
+    std::vector<float> m, v, q;                  // beams: rows x nodes: bending moment (N m), shear force (N), applied distributed load (N/m)
+    std::vector<float> pl;                       // beams: rows x 16: up to 8 concentrated forces as (x, P) pairs
     double length = 0, E = 0;
+    bool restrained = false;                     // beams: held against growing (axial restraint at two points)
+    double axialSigma = 0, epsT = 0;             // beams: thermal axial stress (Pa) and free thermal strain, latest sample
     int chanDeform = -1, chanLoad = -1;          // indices of the body's deformation and contact-force channels
     size_t rows() const { return fe.x.empty() ? 0 : w.size() / fe.x.size(); }
 };

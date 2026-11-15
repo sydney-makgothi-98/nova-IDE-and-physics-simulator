@@ -19,6 +19,7 @@ static inline double kDir(const Body& b, Vec2 r, Vec2 d) {   // effective invers
 // ====================================================================== construction / reset
 World::World(const Model& m) : model_(m) {
     model_.updateMass();
+    rebuildExprs();
     reset();
 }
 
@@ -88,12 +89,18 @@ void World::computeForces(const std::vector<BodyState>& S, double t, std::vector
         if (!b.isDynamic()) continue;
         const BodyState& s = S[i];
         F[i].y += b.massKg * env.gravity;                                        // -dV/dy of the gravity term
-        if (b.driveF != 0) {                                                     // harmonic push Q
-            double f = b.driveT > 0 ? (t >= 0 && t < b.driveT ? b.driveF * std::sin(kPi * t / b.driveT) : 0.0) : b.driveF * std::cos(b.driveW * t);
-            double a = b.driveAngleDeg * kPi / 180.0;
-            Vec2 d(f * std::cos(a), f * std::sin(a));
-            F[i] += d;
-            pin += dot(d, s.vel);
+        {
+            Vec2 d = externalForce((int)i, t);                                   // harmonic push, pulse and constant load
+            if (d.x != 0 || d.y != 0) { F[i] += d; pin += dot(d, s.vel); }
+            Vec2 fd;
+            double td = 0;
+            distributedForce(s, (int)i, t, fd, td);                              // distributed load: its resultant force and torque
+            if (fd.x != 0 || fd.y != 0 || td != 0) { F[i] += fd; tau[i] += td; pin += dot(fd, s.vel) + td * s.omega; }
+        }
+        {
+            double M = b.momentN;                                                // applied moment, clockwise on screen when positive
+            if (b.momentTimeVar) M = (i < mexpr_.size() && mexpr_[i]) ? mexpr_[i]->eval(0, 1, t) : 0.0;
+            if (M != 0 && !b.lockRot) { tau[i] += M; pin += M * s.omega; }
         }
         if (env.airDrag) {                                                       // F = -(c1 + c2 |v|) v
             double sp = length(s.vel), c = env.drag1 + env.drag2 * sp;
@@ -105,24 +112,38 @@ void World::computeForces(const std::vector<BodyState>& S, double t, std::vector
     for (const Link& l : model_.links) {
         if (l.kind != LinkKind::Spring && l.kind != LinkKind::Damper) continue;
         const BodyState &A = S[l.a], &B = S[l.b];
-        Vec2 ra = A.rot.apply(l.la), rb = B.rot.apply(l.lb);
-        Vec2 d = (B.pos + rb) - (A.pos + ra);
-        double len = length(d);
-        Vec2 u = len > 1e-9 ? d * (1.0 / len) : Vec2(1, 0);
-        double f;
-        if (l.kind == LinkKind::Spring) {
-            double s = len - l.L0;
-            f = l.k * s + l.k3 * s * s * s;                                      // dV/ds
-        } else {
-            if (!env.damping) continue;
-            Vec2 va = A.vel + cross(A.omega, ra), vb = B.vel + cross(B.omega, rb);
-            double rate = dot(u, vb - va);                                       // ds/dt
-            f = l.c * rate;                                                      // dD/d(sdot)
-            pv += l.c * rate * rate;                                             // heat power 2D
+        const int N = l.distN();                                                 // a distribution is N small elements along the span
+        const double span = l.distSpan();
+        for (int q = 0; q < N; ++q) {
+            Vec2 pla = l.la, plb = l.lb;
+            double ke = l.k, ce = l.c;                                           // stiffness / damping of this element
+            if (l.dist) {
+                const double fr = (q + 0.5) / N, sd = fr * span;
+                pla = l.la + (l.la2 - l.la) * fr;
+                plb = l.lb + (l.lb2 - l.lb) * fr;
+                const double add = l.dist == 2 ? l.distM * sd : 0.0;             // constant: k per metre; linear: k + m s per metre
+                ke = std::max(0.0, l.k + add) * span / N;
+                ce = std::max(0.0, l.c + add) * span / N;
+            }
+            Vec2 ra = A.rot.apply(pla), rb = B.rot.apply(plb);
+            Vec2 d = (B.pos + rb) - (A.pos + ra);
+            double len = length(d);
+            Vec2 u = len > 1e-9 ? d * (1.0 / len) : Vec2(1, 0);
+            double f;
+            if (l.kind == LinkKind::Spring) {
+                double s = len - l.L0;
+                f = ke * s + l.k3 * s * s * s;                                   // dV/ds
+            } else {
+                if (!env.damping) break;
+                Vec2 va = A.vel + cross(A.omega, ra), vb = B.vel + cross(B.omega, rb);
+                double rate = dot(u, vb - va);                                   // ds/dt
+                f = ce * rate;                                                   // dD/d(sdot)
+                pv += ce * rate * rate;                                          // heat power 2D
+            }
+            Vec2 Fa = u * f;                                                     // force on a: +f u, on b: -f u
+            if (model_.bodies[l.a].isDynamic()) { F[l.a] += Fa; tau[l.a] += cross(ra, Fa); }
+            if (model_.bodies[l.b].isDynamic()) { F[l.b] -= Fa; tau[l.b] += cross(rb, -Fa); }
         }
-        Vec2 Fa = u * f;                                                         // force on a: +f u, on b: -f u
-        if (model_.bodies[l.a].isDynamic()) { F[l.a] += Fa; tau[l.a] += cross(ra, Fa); }
-        if (model_.bodies[l.b].isDynamic()) { F[l.b] -= Fa; tau[l.b] += cross(rb, -Fa); }
     }
 
     for (const Link& l : model_.links) {                                         // hinge motors and rotary damping
@@ -133,6 +154,7 @@ void World::computeForces(const std::vector<BodyState>& S, double t, std::vector
         double wrel = (db ? B.omega : 0.0) - (da ? A.omega : 0.0);
         double Tc = 0;
         if (l.jointC > 0 && env.damping) { Tc = -l.jointC * wrel; pv += l.jointC * wrel * wrel; }
+        if (l.kt != 0) Tc -= l.kt * (B.angle - A.angle - l.refAngle);   // torsional spring: restoring torque on B
         if (db) tau[l.b] += T + Tc;
         if (da) tau[l.a] -= T + Tc;
         pin += T * wrel;
@@ -160,9 +182,23 @@ double World::potentialEnergy(const std::vector<BodyState>& S) const {
     for (const Link& l : model_.links) {
         if (l.kind != LinkKind::Spring) continue;
         const BodyState &A = S[l.a], &B = S[l.b];
-        double len = length((B.pos + B.rot.apply(l.lb)) - (A.pos + A.rot.apply(l.la)));
-        double s = len - l.L0;
-        V += 0.5 * l.k * s * s + 0.25 * l.k3 * s * s * s * s;
+        const int N = l.distN();
+        const double span = l.distSpan();
+        for (int q = 0; q < N; ++q) {
+            const double fr = (q + 0.5) / N;
+            Vec2 pla = l.la, plb = l.lb;
+            double ke = l.k;
+            if (l.dist) { pla = l.la + (l.la2 - l.la) * fr; plb = l.lb + (l.lb2 - l.lb) * fr; }
+            if (l.dist) ke = std::max(0.0, l.k + (l.dist == 2 ? l.distM * fr * span : 0.0)) * span / N;
+            double len = length((B.pos + B.rot.apply(plb)) - (A.pos + A.rot.apply(pla)));
+            double s = len - l.L0;
+            V += 0.5 * ke * s * s + 0.25 * l.k3 * s * s * s * s;
+        }
+    }
+    for (const Link& l : model_.links) {                                         // torsional springs
+        if (l.kind != LinkKind::Pin || l.kt == 0) continue;
+        double th = S[l.b].angle - S[l.a].angle - l.refAngle;
+        V += 0.5 * l.kt * th * th;
     }
     for (size_t i = 0; i < model_.bodies.size(); ++i) {
         const Body& b = model_.bodies[i];
@@ -183,8 +219,70 @@ void World::measure() {
 }
 
 void World::rebaseLedger() {
+    rebuildExprs();
     measure();
     ledger_.E0 = ledger_.E - (ledger_.workIn - ledger_.dissipated());
+}
+
+void World::rebuildExprs() {
+    dexpr_.assign(model_.bodies.size(), nullptr);
+    lexpr_.assign(model_.bodies.size(), nullptr);
+    mexpr_.assign(model_.bodies.size(), nullptr);
+    for (size_t i = 0; i < model_.bodies.size(); ++i) {
+        if (model_.bodies[i].loadTimeVar) lexpr_[i] = Expr::parse(model_.bodies[i].loadExpr);
+        if (model_.bodies[i].momentTimeVar) mexpr_[i] = Expr::parse(model_.bodies[i].momentExpr);
+    }
+    for (size_t i = 0; i < model_.bodies.size(); ++i)
+        if (model_.bodies[i].dloadType == DL_Equation) dexpr_[i] = Expr::parse(model_.bodies[i].dloadExpr);
+}
+
+Vec2 World::distributedDir(int i) const {
+    double a = model_.bodies[i].dloadAngleDeg * kPi / 180.0;
+    return Vec2(std::cos(a), std::sin(a));
+}
+
+double World::distributedAt(int i, double x, double t) const {
+    const Body& b = model_.bodies[i];
+    return distributedLoadAt(b, i < (int)dexpr_.size() ? dexpr_[i].get() : nullptr, x, t);
+}
+
+void World::distributedForce(const BodyState& s, int i, double t, Vec2& F, double& tau) const {
+    F = Vec2();
+    tau = 0;
+    const Body& b = model_.bodies[i];
+    if (b.dloadType == DL_None || b.shape.preset != ShapePreset::Box || !b.isDynamic()) return;
+    double a, z;
+    distributedLoadSpan(b, &a, &z);
+    if (z - a < 1e-9) return;
+    const int N = 48;
+    const double dx = (z - a) / N, L = b.shape.w;
+    const Vec2 dir = distributedDir(i), ex = s.rot.apply(Vec2(1, 0));
+    const Expr* e = i < (int)dexpr_.size() ? dexpr_[i].get() : nullptr;
+    for (int k = 0; k < N; ++k) {
+        double xm = a + (k + 0.5) * dx;
+        double q = distributedLoadAt(b, e, xm, t);
+        if (q == 0) continue;
+        Vec2 f = dir * (q * dx);
+        F += f;
+        tau += cross(ex * (xm - L / 2), f);
+    }
+}
+
+Vec2 World::externalForce(int i, double t) const {
+    const Body& b = model_.bodies[i];
+    Vec2 d;
+    if (b.driveF != 0) {
+        double f = b.driveT > 0 ? (t >= 0 && t < b.driveT ? b.driveF * std::sin(kPi * t / b.driveT) : 0.0) : b.driveF * std::cos(b.driveW * t);
+        double a = b.driveAngleDeg * kPi / 180.0;
+        d += Vec2(f * std::cos(a), f * std::sin(a));
+    }
+    double mag = b.loadN;
+    if (b.loadTimeVar) mag = (i < (int)lexpr_.size() && lexpr_[i]) ? lexpr_[i]->eval(0, 1, t) : 0.0;     // F(t)
+    if (mag != 0) {
+        double a = (b.loadAngleDeg + (b.loadPull ? 180.0 : 0.0)) * kPi / 180.0;
+        d += Vec2(mag * std::cos(a), mag * std::sin(a));
+    }
+    return d;
 }
 
 LinkReading World::link(int i) const {
@@ -197,7 +295,31 @@ LinkReading World::link(int i) const {
     r.length = length(d);
     Vec2 u = r.length > 1e-9 ? d * (1.0 / r.length) : Vec2(1, 0);
     r.rate = dot(u, (B.vel + cross(B.omega, rb)) - (A.vel + cross(A.omega, ra)));
-    if (l.kind == LinkKind::Spring) {
+    if (l.dist && (l.kind == LinkKind::Spring || l.kind == LinkKind::Damper)) {      // a distribution: total force and heat of all its elements
+        const int N = l.distN();
+        const double span = l.distSpan();
+        double ft = 0, pw = 0, st = 0;
+        for (int q = 0; q < N; ++q) {
+            const double fr = (q + 0.5) / N;
+            Vec2 pla = l.la + (l.la2 - l.la) * fr, plb = l.lb + (l.lb2 - l.lb) * fr;
+            Vec2 qa = A.rot.apply(pla), qb = B.rot.apply(plb);
+            Vec2 dd = (B.pos + qb) - (A.pos + qa);
+            double ln = length(dd);
+            Vec2 uu = ln > 1e-9 ? dd * (1.0 / ln) : Vec2(1, 0);
+            double add = l.dist == 2 ? l.distM * fr * span : 0.0;
+            if (l.kind == LinkKind::Spring) {
+                double s = ln - l.L0;
+                ft += std::max(0.0, l.k + add) * span / N * s + l.k3 * s * s * s;
+                st += s / N;
+            } else if (model_.env.damping) {
+                double rt = dot(uu, (B.vel + cross(B.omega, qb)) - (A.vel + cross(A.omega, qa)));
+                double ce = std::max(0.0, l.c + add) * span / N;
+                ft += ce * rt;
+                pw += ce * rt * rt;
+            }
+        }
+        r.force = ft; r.power = pw; r.stretch = st;
+    } else if (l.kind == LinkKind::Spring) {
         r.stretch = r.length - l.L0;
         r.force = l.k * r.stretch + l.k3 * r.stretch * r.stretch * r.stretch;
     } else if (l.kind == LinkKind::Damper) {
@@ -770,15 +892,40 @@ void World::stepConstrained(double h) {
 // ====================================================================== the public step
 void World::step() {
     const double h = model_.env.dt;
-    double pv0, pd0, pin0, pv1, pd1, pin1;
+    double pv0, pd0, pin0, pv1, pd1, pin1, tail = h;
     computeForces(S_, t_, F_, tau_, &pv0, &pd0, &pin0);
-    if (usesConstraintSolver()) stepConstrained(h);
-    else {
+    if (usesConstraintSolver()) {
+        // Contacts are found at the start of a step, so a body that travels further than its own thickness in one
+        // step can jump clean through a wall or another body. Sub-step so that no collidable body moves more than
+        // a quarter of its smallest dimension per sub-step (usually 1; only fast, hard impacts need more).
+        int sub = 1;
+        if (model_.env.collisions) {
+            double ratio = 0;
+            for (size_t i = 0; i < S_.size(); ++i) {
+                const Body& b = model_.bodies[i];
+                if (!b.isDynamic() || !b.collides()) continue;
+                double thick = b.shape.isCircle() ? b.shape.radius : 1e300;
+                for (size_t k = 0; k < b.shape.verts.size() && k < b.shape.normals.size(); ++k)
+                    thick = std::min(thick, std::fabs(dot(b.shape.normals[k], b.shape.verts[k])));
+                if (thick < 1e-6 || thick > 1e200) continue;
+                double speed = length(S_[i].vel) + length(F_[i]) * b.invMass * h;       // include what this step's forces add
+                double reach = (speed + std::fabs(S_[i].omega) * b.shape.boundingRadius()) * h;
+                ratio = std::max(ratio, reach / (0.25 * thick));
+            }
+            sub = std::min(64, std::max(1, (int)std::ceil(ratio)));
+        }
+        const double hs = h / sub;
+        tail = hs;
+        for (int k = 0; k < sub; ++k) {
+            stepConstrained(hs);
+            if (k + 1 < sub) t_ += hs;
+        }
+    } else {
         stepSmooth(h);
         contacts_.clear();
         contactInfo_.clear();
     }
-    t_ += h;
+    t_ += tail;
     ++steps_;
     computeForces(S_, t_, F_, tau_, &pv1, &pd1, &pin1);
     ledger_.workIn += 0.5 * (pin0 + pin1) * h;                    // trapezoid rule for the three power integrals

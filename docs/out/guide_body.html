@@ -964,4 +964,1296 @@ td code, li code, p code { font-size: 9.6pt; }
 <p><code>vlab_cli --list</code> lists the examples. <code>vlab_cli --example 7 --duration 8 --out ball.xlsx</code> runs example 7 and exports. <code>vlab_cli --file my.vlab --ideal --duration 30 --sample-hz 50 --out run.xlsx</code> runs your design in ideal mode. Add <code>--spectrum</code> or <code>--modal</code> to include those sheets.</p>
 <h2 id="s44">9.5  The Unreal Engine plugin</h2>
 
-<p>The folder <code>UnrealPlugin</code> contains a plugin that runs the same engine inside Unreal Engine 5, so a design made here can drive meshes in a game level. It is a beta scaffold; see its README.</p></body></html>
+<p>The folder <code>UnrealPlugin</code> contains a plugin that runs the same engine inside Unreal Engine 5, so a design made here can drive meshes in a game level. It is a beta scaffold; see its README.</p>
+<h1 class="chapter" id="c45"><span class="cn">Chapter 10</span><span class="ct">Creating Generalized Equations and Code for Any System</span></h1>
+
+<p>Every other chapter of this guide tells you what the program does. This chapter tells you <strong>how it was made to work for any system you can draw</strong>: a mass on a rail, a pendulum, a quarter-car, a robotic arm, a block on a bed of springs, a beam with a torsional spring at its hinge, a truck on a bridge. It explains the mathematics first, then walks through the real source code function by function, and at each step says <strong>why</strong> the choice was made, <strong>why not</strong> the obvious alternatives, and <strong>what the alternatives would have cost</strong>.</p>
+<p>The listings in this chapter are copied from the source files automatically when the guide is built, so they always match the program. Line numbers are the real line numbers of the file at that moment.</p>
+<div class="co co-note"><div class="co-t">NOTE</div><p><strong>Who this chapter is for.</strong> You do not need to know the physics to follow the <em>ideas</em>, but the code listings assume you can read C++. If you want to add a new kind of element (a new spring, a new joint, a new load), the last two sections give a recipe you can follow step by step, and the next chapter explains how to build and publish the result.</p></div>
+<h1 class="chapter" id="c46"><span class="cn">Chapter 11</span><span class="ct">The Problem: One Engine, Infinitely Many Systems</span></h1>
+
+<p>A textbook solves one system at a time. For a mass on a spring you write one equation, m x'' + c x' + k x = F(t). For a double pendulum you derive a different, much longer pair of equations. For a quarter-car you derive a third. Each derivation is correct and each is useless for the next system. A <strong>general</strong> simulator cannot work that way, because the user decides the system <em>after</em> the program is written.</p>
+<p>So the design question was:</p>
+<div class="co co-def"><div class="co-t">KEY WORD</div><p><strong>The generalization question.</strong> What single description of a mechanical system is (1) rich enough to express every system the user can draw, (2) simple enough that one piece of code can advance any of them in time, and (3) honest enough that the answer can be checked against the physics we already know?</p></div>
+<p>The answer the program uses has three layers, each of which you will meet below.</p>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>What it contains</th>
+<th>Where it lives</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Description</strong></td>
+<td>Bodies (shape, mass, material, starting state) and Links (springs, dampers, rods, hinges, welds, rollers) with their attachment points</td>
+<td><code>core/include/vlab/model.hpp</code>, <code>core/src/model.cpp</code></td>
+</tr>
+<tr>
+<td><strong>Equations</strong></td>
+<td>Newton's second law for every body in the same coordinates, with the forces written once, per <em>kind</em> of element, not per system</td>
+<td><code>core/src/world.cpp</code>: <code>computeForces</code>, <code>potentialEnergy</code></td>
+</tr>
+<tr>
+<td><strong>Constraints and contact</strong></td>
+<td>Everything that is not a smooth force: hinges, welds, rails, collisions, friction</td>
+<td><code>core/src/world.cpp</code>: the impulse solver</td>
+</tr>
+</tbody>
+</table>
+<p>The rest of the chapter is these three layers, in that order, followed by time stepping, energy accounting, testing, and a recipe for adding to them.</p>
+<h1 class="chapter" id="c47"><span class="cn">Chapter 12</span><span class="ct">Choosing the Coordinates</span></h1>
+
+<h2 id="s48">12.1  The choice: three numbers per body, in world axes, always</h2>
+
+<p>Every body in the program, whatever it is, is described by the same three numbers (<strong>x, y, θ</strong>) and their rates (<strong>ẋ, ẏ, θ̇</strong>): position of its centre of mass in the world, and the angle it has turned. That is all the engine ever stores about where a body is.</p>
+<p>The structure that holds them is, in <code>world.hpp</code>:</p>
+<div class="codewrap"><div class="code-t">C++</div><pre class="code">struct BodyState {
+    Vec2 pos;
+    double angle = 0;
+    Vec2 vel;
+    double omega = 0;
+    Rot rot;                       // cached cos/sin of angle
+};</pre></div>
+<ul>
+<li><strong><code>pos</code></strong> is the centre of mass in metres. The y axis points <strong>down</strong>, exactly like the screen, so gravity is a positive y force and a drawing needs no flipping.</li>
+<li><strong><code>angle</code></strong> is in radians. Because y points down, a <em>positive</em> angle turns the body <strong>clockwise on the screen</strong>. This single convention decides the sign of every moment, torque and torsional spring in the program.</li>
+<li><strong><code>vel</code>, <code>omega</code></strong> are the rates, in m/s and rad/s.</li>
+<li><strong><code>rot</code></strong> is a cache of cos θ and sin θ, so the sine and cosine of an angle are computed once per body per step and not once per use. A step may rotate the same body's attachment points hundreds of times (a spring distribution has up to 40 elements).</li>
+</ul>
+<h2 id="s49">12.2  Why not &quot;generalized coordinates&quot;?</h2>
+
+<p>The classical way to analyse a pendulum is to choose the <strong>one</strong> number that describes it, the angle, and to derive the equation of motion for that number alone. This is the <em>minimal-coordinate</em> method, and it is the heart of Lagrangian textbooks. It gives the smallest possible set of equations, with no constraint forces to worry about.</p>
+<p>The program deliberately does <strong>not</strong> do that, for four reasons.</p>
+<ol>
+<li><strong>The user chooses the system at run time.</strong> A minimal coordinate set depends on how the bodies are connected. Pin two bodies together and you have removed two coordinates. Remove the pin and they come back. The program would have to re-derive its equations every time you clicked. Maximal coordinates (three per body, always) do not change when you add or remove a connection.</li>
+<li><strong>Contacts break and form.</strong> A ball resting on a floor has two coordinates fewer than a ball in the air. A minimal-coordinate engine would need to change its coordinate set mid-run. With maximal coordinates the ball just <em>has</em> the same three numbers, and the floor contributes a force when they touch.</li>
+<li><strong>Loops are easy.</strong> A crank, a connecting rod and a piston form a closed loop (the single-cylinder engine example). Minimal coordinates for a loop need a loop-closure equation that is hard to solve generally. Maximal coordinates plus a pin constraint handle any loop identically.</li>
+<li><strong>One code path.</strong> The force on a body is the same few lines for every body.</li>
+</ol>
+<div class="co co-why"><div class="co-t">WHY?</div><p><strong>What it costs.</strong> Maximal coordinates mean more numbers than the system really has, and the constraints (a pin says "these two points must coincide") are <em>extra</em> equations that must be enforced. Section "Constraints" below is the price of this choice. It is the standard trade that every general-purpose physics engine makes, because the alternative cannot be general.</p></div>
+<h2 id="s50">12.3  Local frames: how orientation stops mattering</h2>
+
+<p>The second decision is where things attach. A spring does not attach to "the right side of the block at x = 1.5"; it attaches to a point <strong>in the body's own frame</strong>: <code>la</code> for the first body and <code>lb</code> for the second. The world position of the attachment is then computed fresh every step:</p>
+<div class="eq">p<sub>world</sub> = p<sub>body</sub> + R(θ) · l<sub>local</sub> <span class="tag">(5.1)</span></div>
+
+<p>where R(θ) is the 2 × 2 rotation matrix. In code this is <code>pos + rot.apply(local)</code>, and the inverse (world to local) is <code>rot.applyInv(world - pos)</code>. Both live in <code>math.hpp</code>:</p>
+<div class="codewrap breakable"><div class="code-t">core/include/vlab/math.hpp   (lines 23 to 30)</div><pre class="code src">  23  inline double dot(Vec2 a, Vec2 b) { return a.x * b.x + a.y * b.y; }
+  24  inline double cross(Vec2 a, Vec2 b) { return a.x * b.y - a.y * b.x; }          // scalar z of a x b
+  25  inline Vec2 cross(double s, Vec2 v) { return {-s * v.y, s * v.x}; }            // s (z) x v
+  26  inline Vec2 cross(Vec2 v, double s) { return {s * v.y, -s * v.x}; }            // v x s (z)
+  27  inline double length(Vec2 v) { return std::sqrt(v.x * v.x + v.y * v.y); }
+  28  inline double lengthSq(Vec2 v) { return v.x * v.x + v.y * v.y; }
+  29  inline Vec2 normalized(Vec2 v) { double l = length(v); return l &gt; 1e-12 ? Vec2(v.x / l, v.y / l) : Vec2(1, 0); }
+  30  inline Vec2 perp(Vec2 v) { return {-v.y, v.x}; }                                // rotate +90 degrees</pre></div>
+<div class="codewrap breakable"><div class="code-t">core/include/vlab/math.hpp   (lines 34 to 40)</div><pre class="code src">  34  struct Rot {
+  35      double c = 1, s = 0;
+  36      Rot() = default;
+  37      explicit Rot(double angle) : c(std::cos(angle)), s(std::sin(angle)) {}
+  38      Vec2 apply(Vec2 v) const { return {c * v.x - s * v.y, s * v.x + c * v.y}; }
+  39      Vec2 applyInv(Vec2 v) const { return {c * v.x + s * v.y, -s * v.x + c * v.y}; }
+  40  };</pre></div>
+<ul>
+<li><strong><code>dot(a, b)</code></strong> is a·b = a<sub>x</sub>b<sub>x</sub> + a<sub>y</sub>b<sub>y</sub>: the projection of one vector on another. It appears whenever a force direction must be extracted from a velocity or a displacement.</li>
+<li><strong><code>cross(a, b)</code></strong> returns the <em>scalar</em> z component of the 3-D cross product a × b = a<sub>x</sub>b<sub>y</sub> − a<sub>y</sub>b<sub>x</sub>. In 2-D this one number is all there is of a torque or of an angular momentum, and it is positive for a <strong>clockwise</strong> turn on the screen because y points down.</li>
+<li><strong><code>cross(s, v)</code></strong> and <strong><code>cross(v, s)</code></strong> are the two mixed forms (scalar angular velocity times a vector, and the reverse). The first, <code>cross(omega, r)</code>, is the velocity of a point at lever arm r on a spinning body: <strong>v<sub>point</sub> = v + ω × r</strong>. It is used for every contact and every damper.</li>
+<li><strong><code>Rot</code></strong> stores cos θ and sin θ. <code>apply</code> rotates a vector by θ; <code>applyInv</code> rotates it by −θ. Storing them avoids calling <code>std::cos</code> and <code>std::sin</code> (slow) in the innermost loops.</li>
+</ul>
+<p>Because attachment points are in the <strong>body's frame</strong>, rotating a body, tilting a floor to 28°, or drawing the whole system upside down changes nothing in the equations. The attachment moves with the body automatically. This is the entire mechanism by which "any orientation" works: orientation lives in the <em>state</em> (<code>angle</code>), never in the <em>formulas</em>.</p>
+<div class="co co-why"><div class="co-t">WHY?</div><p><strong>Why not store world coordinates for attachments?</strong> Because a rotating body would drag them out of place and every step would have to update them by hand. Local frames make the geometry <strong>invariant</strong>: the stored number never changes while the body moves.</p></div>
+<h1 class="chapter" id="c51"><span class="cn">Chapter 13</span><span class="ct">Describing a System: Bodies, Links and the Model</span></h1>
+
+<p>The description layer is plain data. A <code>Model</code> is two lists, one of <code>Body</code> and one of <code>Link</code>, plus the environment (gravity, friction switches, time step) and the run settings. There is no behaviour in it. That is on purpose: the same Model can be saved to a file, shown in the interface, run by the engine, exported to Excel, or handed to the Unreal Engine plugin.</p>
+<h2 id="s52">13.1  The Link: one structure for six kinds of connection</h2>
+
+<p>All connections are one structure, distinguished by a <code>kind</code> field. The full definition today, including the distribution and torsion fields added in version 1.2:</p>
+<div class="codewrap breakable"><div class="code-t">core/include/vlab/model.hpp   (lines 100 to 122)</div><pre class="code src"> 100  struct Link {
+ 101      LinkKind kind = LinkKind::Spring;
+ 102      int a = -1, b = -1;       // body indices
+ 103      Vec2 la, lb;              // attachment points in each body&#x27;s local frame (metres)
+ 104      double k = 50;            // spring stiffness N/m
+ 105      double k3 = 0;            // cubic stiffness N/m^3 (0 = ideal linear spring)
+ 106      double L0 = 1;            // spring rest length (m) or rod length (m)
+ 107      bool autoRest = true;     // while true, L0 follows the drawn length
+ 108      double c = 1.0;           // damper coefficient N s/m
+ 109      bool collideConnected = false;   // may the two joined bodies collide with each other?
+ 110      double refAngle = 0;      // Weld: held relative angle (B minus A), follows the drawing
+ 111      double jointC = 0;        // Pin: rotary damping N m s/rad
+ 112      double motorTorque = 0;   // Pin: constant torque on B (and -torque on A), N m
+ 113      double motorAmp = 0;      // Pin: harmonic torque amplitude, N m
+ 114      double motorW = 0;        // Pin: harmonic torque frequency, rad/s
+ 115      double kt = 0;            // Pin: torsional spring stiffness N m/rad about the hinge (0 = free hinge); rest angle = refAngle
+ 116      // Distributed spring / damper: the element is spread along a span, from (la, lb) to (la2, lb2) in the two body frames.
+ 117      int dist = 0;             // 0 = one element, 1 = constant distribution, 2 = linear distribution
+ 118      Vec2 la2, lb2;            // far end of the span on each body (local frames)
+ 119      double distM = 0;         // linear distribution: slope per metre of span. Value per metre at distance s along the span is k (or c) + distM * s
+ 120      int distN() const { double L = length(la2 - la); return dist ? std::max(4, std::min(40, (int)std::ceil(L / 0.15))) : 1; }
+ 121      double distSpan() const { return length(la2 - la); }
+ 122  };</pre></div>
+<p>Read it field by field:</p>
+<ul>
+<li><strong><code>kind</code></strong>: Spring, Damper, Rod, Pin, Weld or Roller. Springs and dampers are <em>smooth</em> forces; the other four are <em>constraints</em>. This split is the most important idea in the engine and Section "Two kinds of connection" returns to it.</li>
+<li><strong><code>a</code>, <code>b</code></strong>: indices of the two bodies. A link always joins exactly two bodies. A wall or the ground is also a body (a <em>Static</em> or <em>Anchor</em> kind), so "spring to the ground" is not a special case.</li>
+<li><strong><code>la</code>, <code>lb</code></strong>: the attachment points in each body's local frame (equation 5.1).</li>
+<li><strong><code>k</code>, <code>k3</code></strong>: linear and cubic stiffness. The force is k s + k<sub>3</sub> s³ where s is the stretch.</li>
+<li><strong><code>L0</code></strong> and <strong><code>autoRest</code></strong>: the rest length, and a flag saying "keep the rest length equal to the length as drawn". Section "Rest lengths" explains why.</li>
+<li><strong><code>c</code></strong>: damping coefficient.</li>
+<li><strong><code>refAngle</code></strong>: the relative angle a Weld holds, and (since 1.2) the rest angle of a torsional spring.</li>
+<li><strong><code>jointC</code>, <code>motorTorque</code>, <code>motorAmp</code>, <code>motorW</code></strong>: a Pin's rotary damping and motor.</li>
+<li><strong><code>kt</code></strong> (1.2): the torsional stiffness of a hinge.</li>
+<li><strong><code>dist</code>, <code>la2</code>, <code>lb2</code>, <code>distM</code></strong> (1.2): a <em>distribution</em>. If <code>dist</code> is 0 the link is one element between <code>la</code> and <code>lb</code>. If it is 1 or 2 the link is a <em>row</em> of elements spread from (<code>la</code>, <code>lb</code>) to (<code>la2</code>, <code>lb2</code>), with constant or linearly varying strength.</li>
+</ul>
+<div class="co co-why"><div class="co-t">WHY?</div><p><strong>Why one structure and not a class hierarchy?</strong> A <code>Spring</code> class, a <code>Damper</code> class and so on is the textbook object-oriented answer. It was rejected because (a) every operation (save, load, draw, edit, export) would need a virtual function per class, (b) adding a feature to <em>several</em> kinds at once (a distribution applies to both springs and dampers) would cross class boundaries, and (c) a plain struct with a tag is trivially copied, which the undo stack, the running world and the file saver all rely on. The cost is a few fields that mean nothing for some kinds. The code accepts that cost to keep the whole model one copyable value.</p></div>
+<h2 id="s53">13.2  Mass properties: where m and I come from</h2>
+
+<p>A body's mass is either typed in or computed from density and area, and its moment of inertia about its centre of mass comes from the shape. <code>Model::updateMass</code> computes <code>massKg</code>, <code>invMass</code>, <code>inertia</code> and <code>invI</code> for every body. Two details matter for generality:</p>
+<ul>
+<li><strong>Inverse mass, not mass.</strong> The solver stores 1/m and 1/I. A fixed body (a floor, an anchor) has <strong>inverse mass zero</strong>, which makes it immovable <em>without any special case</em>: an impulse P changes velocity by P/m = P · invMass = 0.</li>
+<li><strong>Locks.</strong> A body on a rail (<code>lockY</code>, for instance) is not given a different equation. Its inverse mass <strong>along the locked axis</strong> is set to zero by the helper below, so no impulse the solver computes can ever move it that way:</li>
+</ul>
+<div class="codewrap breakable"><div class="code-t">core/src/world.cpp   (lines 12 to 17)</div><pre class="code src">  12  static inline Vec2 invMv(const Body&amp; b) { return Vec2(b.lockX ? 0.0 : b.invMass, b.lockY ? 0.0 : b.invMass); }
+  13  static inline double kDir(const Body&amp; b, Vec2 r, Vec2 d) {   // effective inverse mass of body b along direction d at lever arm r
+  14      Vec2 im = invMv(b);
+  15      double rn = cross(r, d);
+  16      return d.x * d.x * im.x + d.y * d.y * im.y + b.invI * rn * rn;
+  17  }</pre></div>
+<p><code>invMv</code> returns the inverse mass per axis. <code>kDir</code> returns the <strong>effective inverse mass of a body along a direction d at lever arm r</strong>, which is the key number in every constraint:</p>
+<div class="eq">k<sub>d</sub> = d<sub>x</sub>² / m<sub>x</sub> + d<sub>y</sub>² / m<sub>y</sub> + (r × d)² / I <span class="tag">(5.2)</span></div>
+
+<p>It answers the question "if I push this body along d at the point r, how much does that point accelerate per newton?" A heavy body or one with a long lever arm and a big inertia answers with a small number. The factor (r × d)² / I is the contribution of rotation: pushing off-centre spins the body, and the spin moves the point too.</p>
+<h1 class="chapter" id="c54"><span class="cn">Chapter 14</span><span class="ct">The Equations of Motion for Any Body</span></h1>
+
+<h2 id="s55">14.1  Newton in maximal coordinates</h2>
+
+<p>For every dynamic body i the engine solves</p>
+<div class="eq">m<sub>i</sub> a<sub>i</sub> = F<sub>i</sub>      I<sub>i</sub> α<sub>i</sub> = τ<sub>i</sub> <span class="tag">(5.3)</span></div>
+
+<p>where F<sub>i</sub> is the <strong>total force</strong> at the centre of mass and τ<sub>i</sub> the <strong>total moment</strong> about it. Everything the user can add is a <em>contribution</em> to F<sub>i</sub> or τ<sub>i</sub>: gravity, a spring, a damper, a push, a moment, a distributed load, the mouse. The function that adds them up is <code>World::computeForces</code>. This is where generality is won: <strong>each kind of element is written once</strong>, and it works between any two bodies, at any position, at any angle.</p>
+<p>The Lagrangian derivation of the same equations (chapters 2 and 3 of <em>Inside the Vibration Lab</em>) gives, for a set of coordinates q,</p>
+<div class="eq">M q̈ = − ∂V/∂q − ∂D/∂q̇ + Q <span class="tag">(5.4)</span></div>
+
+<p>with V the potential energy (springs and gravity), D the Rayleigh dissipation function (dampers) and Q the generalized forces of loads. Equation 5.3 and equation 5.4 are the same law. 5.4 tells us <em>where each force comes from</em> (the gradient of an energy), and that is how every new element was derived: <strong>write the energy, differentiate it with respect to the coordinates, and the force and the moment fall out</strong>.</p>
+<h2 id="s56">14.2  Gravity and the potential energy</h2>
+
+<p>Gravity is the simplest contribution, and it is written in <code>computeForces</code> as one line per body. The potential energy of gravity with y pointing down is V = −m g (y − y<sub>0</sub>) (lower means less energy), so the force is −∂V/∂y = +m g, a positive y force. The reference y<sub>0</sub> is the body's drawn position, so the energy starts at zero and the ledger (below) starts clean.</p>
+<h2 id="s57">14.3  The force function, line by line</h2>
+
+<p>Here is the part of <code>computeForces</code> that handles springs and dampers, including distributions. Read it as three nested ideas: <em>for each link</em>, <em>for each element of the link</em>, <em>compute one force and apply it to both bodies</em>.</p>
+<div class="codewrap breakable"><div class="code-t">core/src/world.cpp   (lines 113 to 147)</div><pre class="code src"> 113          if (l.kind != LinkKind::Spring &amp;&amp; l.kind != LinkKind::Damper) continue;
+ 114          const BodyState &amp;A = S[l.a], &amp;B = S[l.b];
+ 115          const int N = l.distN();                                                 // a distribution is N small elements along the span
+ 116          const double span = l.distSpan();
+ 117          for (int q = 0; q &lt; N; ++q) {
+ 118              Vec2 pla = l.la, plb = l.lb;
+ 119              double ke = l.k, ce = l.c;                                           // stiffness / damping of this element
+ 120              if (l.dist) {
+ 121                  const double fr = (q + 0.5) / N, sd = fr * span;
+ 122                  pla = l.la + (l.la2 - l.la) * fr;
+ 123                  plb = l.lb + (l.lb2 - l.lb) * fr;
+ 124                  const double add = l.dist == 2 ? l.distM * sd : 0.0;             // constant: k per metre; linear: k + m s per metre
+ 125                  ke = std::max(0.0, l.k + add) * span / N;
+ 126                  ce = std::max(0.0, l.c + add) * span / N;
+ 127              }
+ 128              Vec2 ra = A.rot.apply(pla), rb = B.rot.apply(plb);
+ 129              Vec2 d = (B.pos + rb) - (A.pos + ra);
+ 130              double len = length(d);
+ 131              Vec2 u = len &gt; 1e-9 ? d * (1.0 / len) : Vec2(1, 0);
+ 132              double f;
+ 133              if (l.kind == LinkKind::Spring) {
+ 134                  double s = len - l.L0;
+ 135                  f = ke * s + l.k3 * s * s * s;                                   // dV/ds
+ 136              } else {
+ 137                  if (!env.damping) break;
+ 138                  Vec2 va = A.vel + cross(A.omega, ra), vb = B.vel + cross(B.omega, rb);
+ 139                  double rate = dot(u, vb - va);                                   // ds/dt
+ 140                  f = ce * rate;                                                   // dD/d(sdot)
+ 141                  pv += ce * rate * rate;                                          // heat power 2D
+ 142              }
+ 143              Vec2 Fa = u * f;                                                     // force on a: +f u, on b: -f u
+ 144              if (model_.bodies[l.a].isDynamic()) { F[l.a] += Fa; tau[l.a] += cross(ra, Fa); }
+ 145              if (model_.bodies[l.b].isDynamic()) { F[l.b] -= Fa; tau[l.b] += cross(rb, -Fa); }
+ 146          }
+ 147      }</pre></div>
+<p>Go through it slowly.</p>
+<ul>
+<li><strong><code>if (l.kind != Spring &amp;&amp; l.kind != Damper) continue;</code></strong> Only the <em>smooth</em> links are handled here. Rods, pins, welds and rollers are constraints and are handled by the impulse solver. The test is first so that most links cost almost nothing.</li>
+<li><strong><code>const BodyState &amp;A = S[l.a], &amp;B = S[l.b];</code></strong> The <em>state array</em> <code>S</code> is passed in, not read from the world, because the RK4 integrator evaluates the forces at four <em>trial</em> states. The same function therefore serves the real state and the trial states.</li>
+<li><strong><code>const int N = l.distN();</code></strong> The number of elements: 1 for an ordinary link, 4 to 40 for a distribution (one element per 0.15 m of span, with a floor of 4 and a ceiling of 40).</li>
+<li><strong><code>for (int q = 0; q &lt; N; ++q)</code></strong> Every element does the same thing.</li>
+<li><strong><code>pla = l.la + (l.la2 - l.la) * fr;</code></strong> The attachment point of element q on the first body: a linear interpolation along the span. <code>fr = (q + 0.5)/N</code> is the <strong>midpoint</strong> of the q-th slice. The same is done for the second body, so each element runs between the two matching points.</li>
+<li><strong><code>ke = max(0, k + add) * span / N;</code></strong> The stiffness of this element. If the link stores k newtons per metre <strong>per metre of span</strong>, then a slice of width span/N has stiffness k × span/N. For a linear distribution, <code>add = distM * sd</code> where <code>sd</code> is the distance along the span, so the value per metre grows as y = m x. The <code>max(0, ...)</code> stops a negative slope from creating a negative stiffness (which would be a <em>pushing</em> spring that grows with stretch: unstable).</li>
+<li><strong><code>ra = A.rot.apply(pla)</code></strong> The lever arm: the vector from the body's centre to its attachment point, in world axes.</li>
+<li><strong><code>d = (B.pos + rb) - (A.pos + ra)</code></strong> The vector between the two attachment points in the world. <code>len = length(d)</code> is the spring's current length and <code>u = d / len</code> its direction. The guard <code>len &gt; 1e-9</code> prevents division by zero when the two points coincide; the direction is then arbitrary (1, 0), and the force is zero anyway because the stretch is far from the rest length.</li>
+<li><strong><code>s = len - l.L0</code></strong> The stretch. The force, <code>f = ke * s + l.k3 * s^3</code>, is dV/ds for V = ½ k s² + ¼ k<sub>3</sub> s⁴.</li>
+<li><strong>Damper branch.</strong> The relative velocity of the two attachment points is <code>va = A.vel + cross(A.omega, ra)</code>, <code>vb = B.vel + cross(B.omega, rb)</code> (equation "v + ω × r"). The rate of change of the length is <code>rate = dot(u, vb - va)</code>, the projection of the relative velocity on the spring direction. The force is <code>ce * rate</code>, and the heat power, <code>ce * rate * rate</code>, is accumulated in <code>pv</code> for the energy ledger.</li>
+<li><strong>Applying it.</strong> <code>Fa = u * f</code> is the force on body a (a stretched spring pulls a toward b). The reaction on b is <code>-Fa</code>. The moment on each body is the cross product of its lever arm with the force it feels: <code>tau[l.a] += cross(ra, Fa)</code>, <code>tau[l.b] += cross(rb, -Fa)</code>. A fixed body is skipped by <code>isDynamic()</code>.</li>
+</ul>
+<div class="co co-mapx"><div class="co-t">MATHS TO CODE</div><table>
+<thead>
+<tr>
+<th>Maths</th>
+<th>Code</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>d = (p<sub>b</sub> + R<sub>b</sub> l<sub>b</sub>) − (p<sub>a</sub> + R<sub>a</sub> l<sub>a</sub>)</td>
+<td><code>d = (B.pos + rb) - (A.pos + ra)</code></td>
+</tr>
+<tr>
+<td>s = &#124;d&#124; − L<sub>0</sub></td>
+<td><code>s = len - l.L0</code></td>
+</tr>
+<tr>
+<td>f = k s + k<sub>3</sub> s³</td>
+<td><code>f = ke * s + l.k3 * s * s * s</code></td>
+</tr>
+<tr>
+<td>u = d / &#124;d&#124;</td>
+<td><code>u = d * (1.0 / len)</code></td>
+</tr>
+<tr>
+<td>ṡ = u · (v<sub>b</sub> − v<sub>a</sub>)</td>
+<td><code>rate = dot(u, vb - va)</code></td>
+</tr>
+<tr>
+<td>F<sub>a</sub> = f u,  F<sub>b</sub> = −f u</td>
+<td><code>Fa = u * f</code>, then <code>-Fa</code></td>
+</tr>
+<tr>
+<td>τ = r × F</td>
+<td><code>tau[l.a] += cross(ra, Fa)</code></td>
+</tr>
+</tbody>
+</table></div>
+<h3>Why the force is correct for any orientation: the derivation</h3>
+
+<p>Take a spring between point P<sub>a</sub> = p<sub>a</sub> + R(θ<sub>a</sub>) l<sub>a</sub> and P<sub>b</sub> = p<sub>b</sub> + R(θ<sub>b</sub>) l<sub>b</sub>. Its length is s + L<sub>0</sub> = |P<sub>b</sub> − P<sub>a</sub>|. The energy is V(s). The generalized force on any coordinate q is −(dV/ds)(∂s/∂q). The derivatives are:</p>
+<div class="eq">∂ℓ/∂p<sub>b</sub> = u,  ∂ℓ/∂p<sub>a</sub> = −u,  ∂ℓ/∂θ<sub>b</sub> = u · (R′ l<sub>b</sub>) = r<sub>b</sub> × u <span class="tag">(5.5)</span></div>
+
+<p>where r<sub>b</sub> = R l<sub>b</sub> is the lever arm and the last equality is the identity (R′ l) · u = r × u in 2-D. So the force on body b is −f u at its centre of mass and the moment is −f (r<sub>b</sub> × u) = r<sub>b</sub> × (−f u): the force acting at the attachment point. <strong>That is the entire derivation of the code above.</strong> Nothing in it depends on the angle of the spring, of either body, or of the world: only on the vectors r and u that the program computes fresh each step. This is why a spring that is vertical, horizontal, diagonal, or rotating with a tumbling body needs no special handling.</p>
+<div class="co co-why"><div class="co-t">WHY?</div><p><strong>Why not write the spring as forces along x and y and be done?</strong> Because the moment would then be forgotten. A spring attached off-centre to a block makes the block <em>rotate</em>. A simulator that only moves the centre of mass gets that wrong. The lever-arm form includes the rotation for free.</p></div>
+<h2 id="s58">14.4  Rest lengths: why &quot;autoRest&quot; exists</h2>
+
+<p>A spring's rest length L<sub>0</sub> is the length at which it exerts no force. The user, however, <em>draws</em> the spring between two points, and usually means "this is relaxed as drawn". The program records <code>L0</code> as the drawn length when the link is created and keeps updating it while the user edits the drawing (<code>Model::refreshAutoRest</code>), until the user types a different rest length (which sets <code>autoRest = false</code>: a <strong>preloaded</strong> spring). Distributions set <code>autoRest = false</code> and an explicit <code>L0</code> equal to the gap between the faces.</p>
+<p>The alternative, asking the user for the rest length of every spring, was rejected: the drawing is the specification, and a model that starts at rest should not have to be told so.</p>
+<h2 id="s59">14.5  The potential energy function</h2>
+
+<p><code>potentialEnergy</code> sums the same elements as the force function, but as energy, because the <strong>energy ledger</strong> needs to know V at every step:</p>
+<div class="codewrap breakable"><div class="code-t">core/src/world.cpp   (lines 180 to 208)</div><pre class="code src"> 180  double World::potentialEnergy(const std::vector&lt;BodyState&gt;&amp; S) const {
+ 181      double V = 0;
+ 182      for (const Link&amp; l : model_.links) {
+ 183          if (l.kind != LinkKind::Spring) continue;
+ 184          const BodyState &amp;A = S[l.a], &amp;B = S[l.b];
+ 185          const int N = l.distN();
+ 186          const double span = l.distSpan();
+ 187          for (int q = 0; q &lt; N; ++q) {
+ 188              const double fr = (q + 0.5) / N;
+ 189              Vec2 pla = l.la, plb = l.lb;
+ 190              double ke = l.k;
+ 191              if (l.dist) { pla = l.la + (l.la2 - l.la) * fr; plb = l.lb + (l.lb2 - l.lb) * fr; }
+ 192              if (l.dist) ke = std::max(0.0, l.k + (l.dist == 2 ? l.distM * fr * span : 0.0)) * span / N;
+ 193              double len = length((B.pos + B.rot.apply(plb)) - (A.pos + A.rot.apply(pla)));
+ 194              double s = len - l.L0;
+ 195              V += 0.5 * ke * s * s + 0.25 * l.k3 * s * s * s * s;
+ 196          }
+ 197      }
+ 198      for (const Link&amp; l : model_.links) {                                         // torsional springs
+ 199          if (l.kind != LinkKind::Pin || l.kt == 0) continue;
+ 200          double th = S[l.b].angle - S[l.a].angle - l.refAngle;
+ 201          V += 0.5 * l.kt * th * th;
+ 202      }
+ 203      for (size_t i = 0; i &lt; model_.bodies.size(); ++i) {
+ 204          const Body&amp; b = model_.bodies[i];
+ 205          if (b.isDynamic()) V -= b.massKg * model_.env.gravity * (S[i].pos.y - b.pos.y);   // y is down: lower = less energy
+ 206      }
+ 207      return V;
+ 208  }</pre></div>
+<p>Notice that the loop over elements is <strong>identical</strong> in shape to the one in <code>computeForces</code>. This duplication is deliberate. The force must equal the negative gradient of the energy, and keeping the two loops side by side makes a mistake easy to see. If the stiffness weights in the force loop and the energy loop ever disagreed, the energy ledger would drift, and the validation test for distributions (below) would fail.</p>
+<h1 class="chapter" id="c60"><span class="cn">Chapter 15</span><span class="ct">Generalizing the Spring: Distributions</span></h1>
+
+<p>A single spring cannot represent a bed of springs: a floor on elastic mounts, a machine on a row of isolators, a beam on an elastic foundation (a <em>Winkler</em> foundation). The user wanted to say "spread this much stiffness along that face, either evenly or growing along it". That is the distribution.</p>
+<h2 id="s61">15.1  The mathematics: an integral turned into a sum</h2>
+
+<p>A distributed stiffness k(x) per metre along a span of length ℓ gives a total stiffness (for a pure translation of the object) and a stiffness-weighted centre:</p>
+<div class="eq">K = ∫<sub>0</sub><sup>ℓ</sup> k(x) dx,    k(x) = k<sub>0</sub> + m x <span class="tag">(5.6)</span></div>
+
+<p>For a constant distribution K = k<sub>0</sub> ℓ. For the linear distribution that starts from zero (y = m x), K = m ℓ² / 2. The code replaces the integral with the <strong>midpoint rule</strong>:</p>
+<div class="eq">K ≈ Σ<sub>q=0</sub><sup>N−1</sup> k(x<sub>q</sub>) (ℓ/N),    x<sub>q</sub> = (q + ½) ℓ / N <span class="tag">(5.7)</span></div>
+
+<p>and gives each of the N slices its own ordinary spring of stiffness k(x<sub>q</sub>) ℓ/N, placed at x<sub>q</sub>.</p>
+<div class="co co-why"><div class="co-t">WHY?</div><p><strong>Why the midpoint rule?</strong> For a function that is constant or straight (the two cases offered) the midpoint rule is <strong>exact</strong>, not an approximation. Σ (q + ½)/N × (1/N) = ½ for every N, so a linear distribution is reproduced to rounding error. The validation test in <code>core_tests.cpp</code> checks exactly this: 100 N/m total stiffness from a constant distribution and from a linear one, both vibrating a 4 kg block at √(K/m) = 5 rad/s to within 0.00000 m over three seconds.</p></div>
+<h2 id="s62">15.2  Alternatives that were considered</h2>
+
+<table>
+<thead>
+<tr>
+<th>Alternative</th>
+<th>Why it was not chosen</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>One equivalent spring</strong> at the stiffness-weighted centroid</td>
+<td>Cannot resist rotation correctly: a block on a row of springs has a <em>rotational</em> stiffness ∫ k(x)(x − x<sub>c</sub>)² dx that one spring does not give. The rows of elements give it automatically through the lever arms.</td>
+</tr>
+<tr>
+<td><strong>Gaussian quadrature</strong> (a few cleverly placed points)</td>
+<td>Exact for smoother functions than the midpoint rule, but the two shapes offered (constant, linear) are already exact with the midpoint, and equal slices are easier to draw and to explain. If a curved distribution were added, Gauss points would be the upgrade.</td>
+</tr>
+<tr>
+<td><strong>A continuum finite-element foundation</strong></td>
+<td>Needs a mesh of the contact face and a matrix assembly; the engine has no such machinery for contact faces. N independent springs reach the same answer for rigid faces.</td>
+</tr>
+<tr>
+<td><strong>Fixed N (say 10)</strong></td>
+<td>Would give a long face the same resolution as a short one. N = ⌈ℓ / 0.15⌉ (clamped to 4 to 40) keeps the spacing about 15 cm.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="s63">15.3  Where the span comes from: the geometry of &quot;ground and face&quot;</h2>
+
+<p>The user only supplies <strong>two things</strong>: the grounded surface and the object face. Everything else is computed by <code>App::makeDistribution</code>. It is geometry, so it is worth reading in full:</p>
+<div class="codewrap breakable"><div class="code-t">app/ui_canvas.cpp   (lines 447 to 526)</div><pre class="code src"> 447  void App::makeDistribution(int li, Vec2 wa, Vec2 wb) {
+ 448      (void)wa; (void)wb;
+ 449      Model&amp; m = design();
+ 450      if (li &lt; 0 || li &gt;= (int)m.links.size()) return;
+ 451      Link&amp; l = m.links[li];
+ 452      const int ia = l.a, ib = l.b;
+ 453      const bool aFixed = !m.bodies[ia].isDynamic();
+ 454      const int ig = aFixed ? ia : (!m.bodies[ib].isDynamic() ? ib : ia);                 // the ground; if neither is fixed, the first clicked
+ 455      const int io = ig == ia ? ib : ia;                                                  // the object
+ 456      Vec2 pg, po;
+ 457      double ag, ao;
+ 458      bodyPose(ig, pg, ag);
+ 459      bodyPose(io, po, ao);
+ 460      const Body&amp; G = m.bodies[ig];
+ 461      const Body&amp; O = m.bodies[io];
+ 462      // the direction from the ground surface toward the object
+ 463      Vec2 n;
+ 464      if (G.shape.preset == ShapePreset::Line) {
+ 465          n = Rot(ag).apply(Vec2(0, 1));
+ 466          if (dot(n, po - pg) &lt; 0) n = n * -1.0;
+ 467      } else {
+ 468          n = po - pg;
+ 469          double nl2 = length(n);
+ 470          n = nl2 &gt; 1e-9 ? n * (1.0 / nl2) : Vec2(0, -1);
+ 471      }
+ 472      const Vec2 t = Vec2(-n.y, n.x);
+ 473      auto verts = [&amp;](const Body&amp; b, Vec2 p, double a, std::vector&lt;Vec2&gt;&amp; out) {
+ 474          out.clear();
+ 475          if (b.shape.isCircle()) { out.push_back(p + n * -b.shape.radius); out.push_back(p + n * b.shape.radius); out.push_back(p + t * -b.shape.radius); out.push_back(p + t * b.shape.radius); }
+ 476          else if (b.kind == BodyKind::Anchor) { out.push_back(p + t * -0.5); out.push_back(p + t * 0.5); }
+ 477          else { Rot rr(a); for (const Vec2&amp; v : b.shape.verts) out.push_back(p + rr.apply(v)); }
+ 478      };
+ 479      std::vector&lt;Vec2&gt; vo, vg;
+ 480      verts(O, po, ao, vo);
+ 481      verts(G, pg, ag, vg);
+ 482      double o0 = 1e18, o1 = -1e18, dObj = 1e18;                                          // the object&#x27;s extent along the face, and where its face is
+ 483      for (const Vec2&amp; v : vo) { o0 = std::min(o0, dot(t, v)); o1 = std::max(o1, dot(t, v)); dObj = std::min(dObj, dot(n, v)); }
+ 484      double dG = dot(n, pg);                                                             // the ground surface
+ 485      double g0 = -1e18, g1 = 1e18;
+ 486      if (G.shape.preset == ShapePreset::Line) {
+ 487          const double c = dot(t, pg), h = std::min(G.shape.w, 4000.0) * 0.5;
+ 488          g0 = c - h; g1 = c + h;
+ 489      } else {
+ 490          dG = -1e18;
+ 491          g0 = 1e18; g1 = -1e18;
+ 492          for (const Vec2&amp; v : vg) { dG = std::max(dG, dot(n, v)); g0 = std::min(g0, dot(t, v)); g1 = std::max(g1, dot(t, v)); }
+ 493      }
+ 494      double s0 = std::max(o0, g0), s1 = std::min(o1, g1);
+ 495      if (s1 - s0 &lt; 0.1) { s0 = o0; s1 = o1; }                                            // no overlap: just follow the object&#x27;s face
+ 496      if (s1 - s0 &lt; 0.1) { s0 -= 0.25; s1 += 0.25; }
+ 497      auto world = [&amp;](double d, double sPos) { return n * d + t * sPos; };
+ 498      auto loc = [&amp;](int bi, Vec2 w) { Vec2 p; double a; bodyPose(bi, p, a); return Rot(a).applyInv(w - p); };
+ 499      double gs0 = s0, gs1 = s1, os0 = s0, os1 = s1, Lr = dObj - dG;
+ 500      if (distOrient == 2) {                                                              // at an angle: every spring leans the same way
+ 501          const double ar = distAngleDeg * kPi / 180.0;
+ 502          Vec2 u(std::cos(ar), std::sin(ar));
+ 503          double c = dot(n, u);
+ 504          if (c &lt; 0) { u = u * -1.0; c = -c; }
+ 505          if (c &gt; 0.05) {
+ 506              Lr = (dObj - dG) / c;                                                       // spring length along its own direction
+ 507              const double shift = -Lr * dot(t, u);                                       // where it meets the ground, sideways
+ 508              gs0 = s0 + shift; gs1 = s1 + shift;
+ 509          }
+ 510      } else if (distOrient == 0) {                                                       // free: the springs fan between the two faces&#x27; own extents
+ 511          os0 = o0; os1 = o1;
+ 512          const double mid = 0.5 * (o0 + o1);
+ 513          gs0 = std::max(g0, mid - 10.0); gs1 = std::min(g1, mid + 10.0);
+ 514          if (gs1 - gs0 &lt; 0.1) { gs0 = s0; gs1 = s1; }
+ 515      }
+ 516      const Vec2 gA = world(dG, gs0), gB = world(dG, gs1), oA = world(dObj, os0), oB = world(dObj, os1);
+ 517      const int ga = ig, ob = io;
+ 518      l.a = ga; l.b = ob;
+ 519      l.la = loc(ga, gA); l.la2 = loc(ga, gB);
+ 520      l.lb = loc(ob, oA); l.lb2 = loc(ob, oB);
+ 521      l.dist = nextDistMode;
+ 522      l.distM = nextDistMode == 2 ? nextSlope : 0.0;
+ 523      if (nextDistMode == 2) { if (l.kind == LinkKind::Spring) l.k = 0; else l.c = 0; }       // y = m x: starts from zero at the first end
+ 524      l.L0 = std::max(0.05, Lr);
+ 525      l.autoRest = false;
+ 526  }</pre></div>
+<ul>
+<li><strong>Which is the ground?</strong> The fixed body of the pair is the ground (<code>!isDynamic()</code>); if neither is fixed the first one clicked is. This is why the <em>click order does not matter</em> when one of the two is fixed.</li>
+<li><strong>The normal n.</strong> For a floor <em>line</em> the normal is the line's own perpendicular, flipped so that it points toward the object (<code>dot(n, po - pg) &lt; 0</code>). For any other ground body it is the unit vector from the ground's centre to the object's centre.</li>
+<li><strong>The tangent t = (−n<sub>y</sub>, n<sub>x</sub>)</strong>, the direction along the face. The span lives along t.</li>
+<li><strong><code>verts</code></strong> gathers the world-space corner points of a body (a circle gives its four extreme points, an anchor a short segment). From them the code takes the object's extent along t (<code>o0</code>, <code>o1</code>), the position of its face along n (<code>dObj</code> = the smallest n-coordinate of any corner), and the ground's surface <code>dG</code> and extent (<code>g0</code>, <code>g1</code>).</li>
+<li><strong>The span</strong> is the <em>overlap</em> of the two extents, [max(o0, g0), min(o1, g1)]: the part of the object that actually sits over the ground. If there is no overlap it falls back to the object's own face, and if that is tiny it widens to half a metre either side.</li>
+<li><strong>Perpendicular</strong> springs run from the ground surface straight to the face, so both ends use the same sideways position (<code>gs0 = s0</code>). Their rest length is the gap, <code>dObj − dG</code>.</li>
+<li><strong>Angled</strong> springs run along a direction u chosen by the user (0° is right, 90° is down). If u makes angle φ with the normal, a spring crossing a gap g has length g / cos φ, and it meets the ground sideways by g tan φ. In the code, <code>c = dot(n, u)</code> is cos φ, <code>Lr = gap / c</code> is the length, and <code>shift = −Lr * dot(t, u)</code> moves the ground end. A direction nearly parallel to the face (<code>c &lt; 0.05</code>) is ignored, because the springs would be almost infinitely long.</li>
+<li><strong>Local coordinates.</strong> Finally, <code>loc</code> converts every world point back into each body's local frame, because a link stores local points (equation 5.1).</li>
+</ul>
+<div class="co co-why"><div class="co-t">WHY?</div><p><strong>Why a function in the interface file and not in the engine?</strong> The engine only knows links with local points; it does not know that a user <em>clicked</em> on faces. Translating a click into the stored description is interface work, so it lives in the interface (<code>app/ui_canvas.cpp</code>). The engine stays free of any idea of the mouse, which is what allows the validation tests to build the same links by hand and run without a window.</p></div>
+<h1 class="chapter" id="c64"><span class="cn">Chapter 16</span><span class="ct">Generalizing the Hinge: The Torsional Spring</span></h1>
+
+<p>A hinge (Pin) holds two points together and lets the bodies turn. A <strong>torsional spring</strong> adds a restoring moment about the hinge: it resists the <em>relative angle</em> θ<sub>b</sub> − θ<sub>a</sub> from a rest angle θ<sub>0</sub>.</p>
+<div class="eq">V<sub>t</sub> = ½ k<sub>t</sub> (θ<sub>b</sub> − θ<sub>a</sub> − θ<sub>0</sub>)²,     τ<sub>b</sub> = − ∂V<sub>t</sub>/∂θ<sub>b</sub> = − k<sub>t</sub> (θ<sub>b</sub> − θ<sub>a</sub> − θ<sub>0</sub>),     τ<sub>a</sub> = −τ<sub>b</sub> <span class="tag">(5.8)</span></div>
+
+<p>It is two lines in <code>computeForces</code>, in the hinge loop that already handles motors and rotary damping:</p>
+<div class="codewrap"><div class="code-t">C++</div><pre class="code">if (l.kt != 0) Tc -= l.kt * (B.angle - A.angle - l.refAngle);   // torsional spring: restoring torque on B
+...
+if (db) tau[l.b] += T + Tc;
+if (da) tau[l.a] -= T + Tc;</pre></div>
+<ul>
+<li><strong>Why a field on Pin, not a new kind of link?</strong> A torsional spring <em>needs</em> a hinge: it only makes sense where two bodies are pinned. Making it a property of the Pin (a number <code>kt</code>, zero meaning a free hinge) means every place that already knows how to handle a hinge (the solver, the drawing, the file, the reaction readout) handles a torsional hinge for free. The "Torsional spring" tool in the Connections menu simply creates a Pin and sets <code>kt</code>.</li>
+<li><strong>Why reuse <code>refAngle</code>?</strong> The Weld already stores "the relative angle as drawn". The torsional spring wants exactly the same thing: it should rest at the angle the user drew. <code>Model::refreshAutoRest</code> updates <code>refAngle</code> for a Weld, and, since 1.2, for a Pin whose <code>kt</code> is not zero.</li>
+<li><strong>Both bodies.</strong> The moment is applied to B and the opposite moment to A, so the pair together exerts <strong>no net moment</strong> on the system (Newton's third law for moments). If A is the ground, its share is simply discarded.</li>
+<li><strong>Sign.</strong> Positive relative angle turns B clockwise on the screen, so a positive stretch gives a negative (counter-clockwise) moment: the spring pulls it back.</li>
+</ul>
+<p>The energy goes into <code>potentialEnergy</code> as the last loop (V<sub>t</sub> = ½ k<sub>t</sub> θ², summed over hinges), which keeps the energy ledger balanced. The validation test is the textbook one: a 3 kg beam pinned at one end, with I about the pin = I<sub>cm</sub> + m d² = 4.01 kg·m², released from 0.1 rad with k<sub>t</sub> = 40 N·m/rad, must cross zero after one <strong>quarter</strong> of the period π/2 · √(I/k<sub>t</sub>) = 0.4973 s. The program measures 0.4972 s.</p>
+<h1 class="chapter" id="c65"><span class="cn">Chapter 17</span><span class="ct">Generalizing the Loads: Moments and F(t)</span></h1>
+
+<p>A load is a force or moment that does not come from another body. The program has gone through three generations of loads, each a small generalization of the previous one.</p>
+<ol>
+<li><strong>A constant push or pull</strong> along a direction: <code>loadN</code> newtons, at <code>loadAngleDeg</code>, reversed if <code>loadPull</code>.</li>
+<li><strong>A harmonic push</strong>, F cos ωt (the Drive): used for resonance studies.</li>
+<li><strong>A moment and an expression of time</strong> (1.2): <code>momentN</code> and the formulas <code>loadExpr</code> and <code>momentExpr</code> evaluated at the current time.</li>
+</ol>
+<p>All of them are added in <code>World::externalForce</code> and in the body loop of <code>computeForces</code>. The key to the third generation is that <strong>the magnitude can be any function of time</strong>, so the program needs a way to read a formula the user typed.</p>
+<h2 id="s66">17.1  The expression evaluator</h2>
+
+<p>The formula "3<em>t^3 + 2</em>t^2 + 0<em>t + 4" or "100</em>sin(2<em>pi</em>t)" is <strong>text</strong> typed at run time. The program cannot compile it into the C++ program, so it must <em>interpret</em> it. <code>core/src/expr.cpp</code> does this in two steps.</p>
+<ol>
+<li><strong>Parsing.</strong> A recursive-descent parser turns the text into a tree of nodes stored in a flat array (<code>std::vector&lt;Node&gt; nodes_</code>). Each node is a number, a variable (x, L or t), a unary minus, a binary operator, or a function call. Precedence is encoded in the order of the parsing functions: sums call products, products call powers, powers call unary minus and atoms. The rule "^ binds tighter than unary minus" (so −x² means −(x²)) is what the textbook convention requires and what a user types.</li>
+<li><strong>Evaluation.</strong> <code>eval(x, L, t)</code> walks the tree: one pass per call, no allocation. It is fast enough to be evaluated at every one of the 4000 steps a second the engine takes, for every body.</li>
+</ol>
+<p>The parse is done <strong>once</strong>, when the world is built or when the user edits a formula (<code>World::rebuildExprs</code>); the interface caches parsed formulas by their text (<code>Expr::cached</code>) because it asks about the same formula every frame to draw the preview value.</p>
+<div class="co co-why"><div class="co-t">WHY?</div><p><strong>Why write a parser and not use a scripting language?</strong> A full language (Lua, Python, JavaScript) would let the user write anything, but (a) it brings a large dependency into a small, self-contained C++ program; (b) it can loop forever or crash; (c) it makes the validation suite harder to trust because behaviour could not be bounded. A formula language with only numbers, a few functions and no statements <strong>cannot hang</strong> and <strong>cannot do anything but compute a number from t</strong>. The cost is that the user cannot write a loop or an if. The functions <code>step</code>, <code>sign</code>, <code>min</code>, <code>max</code> and <code>floor</code> cover most of what people actually need (pulses, switches, saw-tooth waves).</p></div>
+<h2 id="s67">17.2  Applying a time-varying load</h2>
+
+<p>In <code>externalForce</code> the constant magnitude is replaced by the evaluated formula if the user has chosen "varies with time":</p>
+<div class="codewrap breakable"><div class="code-t">core/src/world.cpp   (lines 271 to 286)</div><pre class="code src"> 271  Vec2 World::externalForce(int i, double t) const {
+ 272      const Body&amp; b = model_.bodies[i];
+ 273      Vec2 d;
+ 274      if (b.driveF != 0) {
+ 275          double f = b.driveT &gt; 0 ? (t &gt;= 0 &amp;&amp; t &lt; b.driveT ? b.driveF * std::sin(kPi * t / b.driveT) : 0.0) : b.driveF * std::cos(b.driveW * t);
+ 276          double a = b.driveAngleDeg * kPi / 180.0;
+ 277          d += Vec2(f * std::cos(a), f * std::sin(a));
+ 278      }
+ 279      double mag = b.loadN;
+ 280      if (b.loadTimeVar) mag = (i &lt; (int)lexpr_.size() &amp;&amp; lexpr_[i]) ? lexpr_[i]-&gt;eval(0, 1, t) : 0.0;     // F(t)
+ 281      if (mag != 0) {
+ 282          double a = (b.loadAngleDeg + (b.loadPull ? 180.0 : 0.0)) * kPi / 180.0;
+ 283          d += Vec2(mag * std::cos(a), mag * std::sin(a));
+ 284      }
+ 285      return d;
+ 286  }</pre></div>
+<ul>
+<li><strong><code>mag = b.loadN</code></strong> by default; <strong><code>mag = lexpr_[i]-&gt;eval(0, 1, t)</code></strong> if <code>loadTimeVar</code> is set. The first two arguments, x and L, are not meaningful for a load on a whole body, so they are passed as 0 and 1.</li>
+<li><strong>Direction.</strong> The force always acts along <code>loadAngleDeg</code>, reversed for a pull. A <em>negative</em> magnitude from the formula (a sine goes negative) therefore reverses the force at that instant, as a user expects.</li>
+<li><strong>A formula that fails to parse</strong> leaves the pointer null and the magnitude zero: the body feels no force, and the interface shows the error message below the text box instead.</li>
+<li><strong>The moment</strong> is the same idea in the body loop of <code>computeForces</code>: <code>M = momentN</code> or <code>mexpr_[i]-&gt;eval(0, 1, t)</code>, added to <code>tau[i]</code>, and its power M ω is added to the work-in integral. A body with locked rotation ignores it.</li>
+</ul>
+<p><strong>Showing the load on the object.</strong> A load the user cannot see is a load the user forgets. In the drawing code (<code>app/ui_canvas.cpp</code>) every load draws an arrow from the body's centre and a label beside it. A constant push or pull is labelled with its value (push 50 N). A time-varying one is labelled with its <strong>formula</strong> (push F(t) = 0 + 100<em>sin(6.2832</em>t + 0<em>pi/180)) and, while the simulation runs, the </em><em>value at this instant</em><em> (now 37.2 N), and its arrow grows, shrinks and </em><em>reverses</em>* with the formula as the sign changes. A moment is a curved arrow round the centre, labelled in newton-metres and clockwise or counter-clockwise, and a time-varying moment shows M(t) and its current value in the same way. The label reads the same cached formula the engine uses, so what is drawn can never disagree with what is simulated.</p>
+<p><strong>Power and the ledger.</strong> Every load does work, and the ledger needs it: P = F · v for a push and P = M ω for a moment. These are accumulated into <code>pin</code> and integrated by the trapezoid rule in <code>World::step</code>. That is why a time-varying load does not upset the energy balance: its work is counted at exactly the moment it is done.</p>
+<h1 class="chapter" id="c68"><span class="cn">Chapter 18</span><span class="ct">Two Kinds of Connection: Smooth Forces and Constraints</span></h1>
+
+<p>So far every contribution has been a <em>force</em>: a spring pulls with a force that depends smoothly on positions and velocities. The equations of motion 5.3 can be integrated directly (the RK4 method below). A <strong>hinge</strong> is different. It does not exert a force that depends on position in any smooth way: it says "these two points shall be at the same place, always". Such a rule is a <strong>constraint</strong>.</p>
+<h2 id="s69">18.1  Why constraints are hard</h2>
+
+<p>The obvious way to enforce a constraint is to treat it as an extremely stiff spring: if two points drift apart by d, apply a force 10⁹ · d to pull them back. This is the <strong>penalty method</strong>. It is easy to write and wrong for a general engine, for three reasons.</p>
+<ol>
+<li><strong>It forces a tiny time step</strong>, because a stiff spring has a very high natural frequency, and the integrator must resolve it (the step must be much smaller than 1/ω).</li>
+<li><strong>It never holds exactly.</strong> The points always separate a little, and the error grows if the system is heavily loaded.</li>
+<li><strong>It adds energy storage that is not in the physical system</strong>, which pollutes the energy ledger.</li>
+</ol>
+<p>The classical exact method is <strong>Lagrange multipliers</strong>: add unknown constraint forces λ, and solve the equations of motion <em>together with</em> the constraint equations, as one linear system, at each step. It is exact, but it needs a large matrix solve and becomes awkward when constraints can appear and disappear (every contact is a constraint that exists for a few milliseconds).</p>
+<h2 id="s70">18.2  The choice: sequential impulses</h2>
+
+<p>The program uses <strong>sequential impulses</strong>, the method used by most real-time physics engines. The idea:</p>
+<ol>
+<li>Move all bodies by the smooth forces over the step, ignoring the constraints. Some constraints are now violated (a pin's two points have separated, or a ball is moving into the floor).</li>
+<li>For <strong>one constraint at a time</strong>, compute the <em>impulse</em> P (a change of momentum, in N·s) that would exactly fix <strong>that constraint's velocity error</strong> if it were the only one. Apply it.</li>
+<li>Fixing constraint 2 disturbs constraint 1. So <strong>repeat the loop</strong> over all the constraints a fixed number of times (14 by default, <code>env.solverIterations</code>). Each pass reduces the total error; for a stable arrangement it converges.</li>
+</ol>
+<p>The impulse for a single constraint along a direction d comes straight from the effective inverse mass of equation 5.2. If the relative velocity along d is v<sub>rel</sub> and it should be zero:</p>
+<div class="eq">P = − v<sub>rel</sub> / (k<sub>a</sub> + k<sub>b</sub>),    k<sub>a</sub> = kDir(A, r<sub>a</sub>, d),   k<sub>b</sub> = kDir(B, r<sub>b</sub>, d) <span class="tag">(5.9)</span></div>
+
+<p>Applying P at the points r<sub>a</sub>, r<sub>b</sub> changes the velocities by exactly the amount that cancels v<sub>rel</sub>. The same formula works for a contact normal, for a friction direction, for one of the two axes of a hinge, for a rod's axis. Only the direction d and the target change.</p>
+<div class="co co-why"><div class="co-t">WHY?</div><p><strong>Why not Lagrange multipliers?</strong> They would be <em>exact in one solve</em>, but they need a matrix assembled from every constraint at every step, and the matrix changes shape when a contact is made or broken. Sequential impulses need no matrix, handle a changing number of constraints trivially, and have a constant, small cost per constraint. The price is that a finite number of iterations leaves a small residual error, which the program controls with the iteration count and with the position correction below.</p></div>
+<h2 id="s71">18.3  How locks, rails and fixed bodies come for free</h2>
+
+<p>Because the solver uses <em>inverse</em> masses and <code>invMv</code> gives zero along a locked axis, <strong>every constraint automatically respects every lock</strong>. A body on a Y rail is "infinitely heavy" in y: any impulse the solver wants to give it in y changes nothing. A static floor is infinitely heavy in both axes. No constraint needs to know about rails.</p>
+<p>After each pass the function <code>applyLocks</code> also zeroes the locked velocity components explicitly, a belt-and-braces step that stops small numerical leakage.</p>
+<h2 id="s72">18.4  Hinges, welds, rollers and rods</h2>
+
+<p>The four constraint kinds are four small functions inside <code>World::solveJoints</code>. Each is a variation of equation 5.9:</p>
+<ul>
+<li><strong>Pin.</strong> The constraint is two-dimensional: the two points must coincide in both x and y. The needed impulse is a 2-vector P solving the 2 × 2 system K P = −v<sub>rel</sub>, where the matrix K has entries k11, k12, k22 built from the inverse masses and lever arms (the code computes them and the determinant explicitly rather than calling a library). One impulse handles both axes, and it handles the coupling between them correctly.</li>
+<li><strong>Weld.</strong> A pin plus a third constraint on the angle: the relative angular velocity must be zero, with impulse λ = −ω<sub>rel</sub> / (1/I<sub>a</sub> + 1/I<sub>b</sub>).</li>
+<li><strong>Roller.</strong> One scalar constraint: the point must stay on a line, so the relative velocity along the line's <em>normal</em> is zeroed. The line is the support's x axis, rotated with its body.</li>
+<li><strong>Rod.</strong> One scalar constraint along the rod's own direction: the <em>length</em> must not change, which means the relative velocity along the rod is zero.</li>
+</ul>
+<p>Each function accumulates the impulses it applies in <code>jointImp_</code>. Dividing by the step gives the <strong>reaction force</strong> at the joint, which is what the "reaction force at a support" readout shows.</p>
+<h2 id="s73">18.5  Position drift and Baumgarte correction</h2>
+
+<p>A velocity-level fix cannot be perfect, and small position errors accumulate (a <em>drift</em>): after a thousand steps a pin's two points may have separated by a millimetre. The program removes the drift in a separate stage, <code>correctPositions</code>, run after the positions are advanced. It measures how far the constraint is violated and moves the bodies (not their velocities) by a fraction of that error, in proportion to their inverse masses:</p>
+<div class="eq">Δp<sub>b</sub> = + β · e · (invMass<sub>b</sub> / (invMass<sub>a</sub> + invMass<sub>b</sub>)),    β = 0.8 for joints, 0.2 for contacts <span class="tag">(5.10)</span></div>
+
+<p>For contacts the correction is limited to a small maximum per step (0.2 m) and ignores the first half-millimetre of overlap (<code>kSlop</code> = 0.0005 m). The slop is not laziness: a resting body <em>must</em> be allowed to sink in by a hair, otherwise the contact flickers on and off and the body jitters.</p>
+<div class="co co-why"><div class="co-t">WHY?</div><p><strong>Why not just remove the error from the velocity (Baumgarte stabilisation on velocities)?</strong> Adding a velocity proportional to the position error injects energy, which the ledger would flag. Correcting the <em>positions</em> directly, as the program does, adds only a tiny amount of potential energy; the ledger even tracks it (<code>ledger_.posCorr</code>) so that the user can see how much was added.</p></div>
+<h1 class="chapter" id="c74"><span class="cn">Chapter 19</span><span class="ct">Contacts: Collisions, Friction and Rolling</span></h1>
+
+<p>Contacts are the most complex constraint, because they appear and disappear and because they have a <em>direction-dependent</em> law (they can push but never pull). Three stages: <strong>detection</strong> (do two bodies overlap?), <strong>manifold</strong> (where, and along which normal?) and <strong>solve</strong> (what impulses?).</p>
+<h2 id="s75">19.1  Detection: three shape combinations</h2>
+
+<p><code>World::collide</code> handles the three combinations. Circles are trivial (compare the distance with the sum of the radii). For polygons the program uses the <strong>Separating Axis Theorem</strong> (SAT): two convex shapes do not overlap if and only if there exists a line (an axis, one of the face normals) onto which their projections do not overlap. The function <code>maxSeparation</code> finds, for each face of one polygon, how far the other polygon lies <em>outside</em> that face; the largest such value, if positive, proves they are apart; if negative on every axis, it is the <strong>penetration depth</strong> on the axis of least penetration.</p>
+<p>The face with the shallowest penetration is chosen as the <strong>reference face</strong>; a small bias (0.0005 m) prefers body A when two faces are almost tied, so that the choice does not flip every step and make the contact jitter. The other body's <strong>incident edge</strong> is the one most facing the reference face, and it is <strong>clipped</strong> to the reference face's side planes (<code>clipSegment</code>). The surviving end points become the contact points: <strong>up to two for polygon against polygon</strong> (an edge resting on an edge), one for circles.</p>
+<div class="co co-why"><div class="co-t">WHY?</div><p><strong>Why SAT and not GJK or a general distance routine?</strong> GJK handles any convex shape, but gives only one contact point per query, and a box resting on a floor needs <em>two</em> contact points to be stable (one point would let it rock). SAT with clipping gives the full resting manifold directly. Since the program's shapes are all convex polygons and circles (a beam is a thin box), SAT's limitation, convexity, is not a limitation here.</p></div>
+<h2 id="s76">19.2  The manifold and warm starting</h2>
+
+<p>Each contact point becomes a <code>Contact</code> with the world points on each body, the normal (from A to B), the separation, and <strong>a key</strong> built from the body indices and the feature identifiers (which edge, which corner). The key lets the solver recognise "the same contact as the last step" and re-apply last step's impulse as a starting guess: <strong>warm starting</strong>. Resting stacks converge in one or two iterations instead of dozens, and nothing creeps. The cache is rebuilt each step (<code>warm_</code>) so that contacts that have ended are forgotten.</p>
+<h2 id="s77">19.3  The impulses: normal, friction and rolling</h2>
+
+<p>In <code>solveContacts</code>, for each contact, in this order:</p>
+<ol>
+<li><strong>Friction first</strong>, bounded by the <em>previous</em> pass's normal impulse. The tangent is t = (n<sub>y</sub>, −n<sub>x</sub>). The impulse that would cancel the sliding is clamped to the <strong>Coulomb cone</strong>: |P<sub>t</sub>| ≤ μ P<sub>n</sub>. If the clamp is active, the surfaces are <em>sliding</em> and the kinetic coefficient μ<sub>k</sub> applies; otherwise they <em>stick</em> (static μ<sub>s</sub>). Clamping an <strong>accumulated</strong> impulse, not each increment, is what makes the iterated friction law correct.</li>
+<li><strong>The normal impulse</strong>, with the restitution target: λ = −m<sub>n</sub> (v<sub>n</sub> − bias), and the accumulated normal impulse is clamped at zero: <strong>contacts push, never pull</strong>. The bias is e · v<sub>n</sub> for a genuine impact (approach speed above <code>restThreshold</code>, 0.25 m/s by default) and zero otherwise, which is how a ball stops bouncing instead of micro-bouncing forever.</li>
+<li><strong>Rolling resistance</strong>, an angular impulse that opposes relative spin, limited by (rollRes · R) P<sub>n</sub>, applies only to circles.</li>
+</ol>
+<p>The material properties of the pair are combined by the rule in the Environment (geometric mean for friction, maximum for restitution by default): <code>World::combine</code>.</p>
+<div class="codewrap breakable"><div class="code-t">core/src/world.cpp   (lines 653 to 698)</div><pre class="code src"> 653  void World::solveContacts() {
+ 654      for (Contact&amp; c : contacts_) {
+ 655          BodyState &amp;sa = S_[c.a], &amp;sb = S_[c.b];
+ 656          const Body &amp;A = model_.bodies[c.a], &amp;B = model_.bodies[c.b];
+ 657          double dn, dt;
+ 658          // friction first (bounded by the normal impulse of the previous pass)
+ 659          {
+ 660              Vec2 vrel = (sb.vel + cross(sb.omega, c.rb)) - (sa.vel + cross(sa.omega, c.ra));
+ 661              double vt = dot(vrel, c.t), lambda = -c.massT * vt;
+ 662              double mu = std::fabs(c.vt0) &lt; 0.02 ? c.muS : c.muK;      // sticking: static bound, sliding: kinetic
+ 663              double maxP = mu * c.Pn, want = c.Pt + lambda, np = clampd(want, -maxP, maxP);
+ 664              bool slip = std::fabs(want) &gt; maxP + 1e-12;                 // the Coulomb limit is active: the surfaces are sliding
+ 665              lambda = np - c.Pt;
+ 666              c.Pt = np;
+ 667              c.slip = slip;
+ 668              if (lambda != 0) {
+ 669                  applyImpulse(c, c.t * lambda, &amp;dn, &amp;dt);
+ 670              }
+ 671          }
+ 672          // normal (with restitution target `bias`)
+ 673          {
+ 674              Vec2 vrel = (sb.vel + cross(sb.omega, c.rb)) - (sa.vel + cross(sa.omega, c.ra));
+ 675              double vn = dot(vrel, c.n), lambda = -c.massN * (vn - c.bias);
+ 676              double np = std::max(c.Pn + lambda, 0.0);
+ 677              lambda = np - c.Pn;
+ 678              c.Pn = np;
+ 679              if (lambda != 0) {
+ 680                  applyImpulse(c, c.n * lambda, &amp;dn, &amp;dt);
+ 681              }
+ 682          }
+ 683          // rolling resistance: an angular impulse that opposes relative spin, limited by rollRes * R * Pn
+ 684          if (c.rollLimit &gt; 0 &amp;&amp; c.massR &gt; 0) {
+ 685              double wrel = sb.omega - sa.omega, lambda = -c.massR * wrel;
+ 686              double maxR = c.rollLimit * c.Pn, want = c.Pr + lambda, np = clampd(want, -maxR, maxR);
+ 687              bool slip = std::fabs(want) &gt; maxR + 1e-12;
+ 688              lambda = np - c.Pr;
+ 689              c.Pr = np;
+ 690              if (lambda != 0) {
+ 691                  double w1 = wrel + lambda * (A.invI + B.invI);
+ 692                  sa.omega -= A.invI * lambda;
+ 693                  sb.omega += B.invI * lambda;
+ 694                  stepDKE_ += lambda * (wrel + w1) * 0.5;
+ 695              }
+ 696          }
+ 697      }
+ 698  }</pre></div>
+<h2 id="s78">19.4  Why a very small time step matters</h2>
+
+<p>Contacts are checked only at the <strong>start</strong> of a step. If a body moves further than its own thickness in one step it can jump straight through a wall: <em>tunnelling</em>. At the default step of 0.25 ms a body would have to move at more than 100 m/s to cross a 3 cm slab. The program adds a safety net in <code>World::step</code>: it measures how far every colliding body can move in the step (speed plus the speed the forces will add, plus rotation at the body's bounding radius) and, if that exceeds an eighth of the body's smallest dimension (a quarter of its half-width), divides the step into up to 64 <strong>sub-steps</strong>.</p>
+<div class="codewrap breakable"><div class="code-t">core/src/world.cpp   (lines 893 to 942)</div><pre class="code src"> 893  void World::step() {
+ 894      const double h = model_.env.dt;
+ 895      double pv0, pd0, pin0, pv1, pd1, pin1, tail = h;
+ 896      computeForces(S_, t_, F_, tau_, &amp;pv0, &amp;pd0, &amp;pin0);
+ 897      if (usesConstraintSolver()) {
+ 898          // Contacts are found at the start of a step, so a body that travels further than its own thickness in one
+ 899          // step can jump clean through a wall or another body. Sub-step so that no collidable body moves more than
+ 900          // a quarter of its smallest dimension per sub-step (usually 1; only fast, hard impacts need more).
+ 901          int sub = 1;
+ 902          if (model_.env.collisions) {
+ 903              double ratio = 0;
+ 904              for (size_t i = 0; i &lt; S_.size(); ++i) {
+ 905                  const Body&amp; b = model_.bodies[i];
+ 906                  if (!b.isDynamic() || !b.collides()) continue;
+ 907                  double thick = b.shape.isCircle() ? b.shape.radius : 1e300;
+ 908                  for (size_t k = 0; k &lt; b.shape.verts.size() &amp;&amp; k &lt; b.shape.normals.size(); ++k)
+ 909                      thick = std::min(thick, std::fabs(dot(b.shape.normals[k], b.shape.verts[k])));
+ 910                  if (thick &lt; 1e-6 || thick &gt; 1e200) continue;
+ 911                  double speed = length(S_[i].vel) + length(F_[i]) * b.invMass * h;       // include what this step&#x27;s forces add
+ 912                  double reach = (speed + std::fabs(S_[i].omega) * b.shape.boundingRadius()) * h;
+ 913                  ratio = std::max(ratio, reach / (0.25 * thick));
+ 914              }
+ 915              sub = std::min(64, std::max(1, (int)std::ceil(ratio)));
+ 916          }
+ 917          const double hs = h / sub;
+ 918          tail = hs;
+ 919          for (int k = 0; k &lt; sub; ++k) {
+ 920              stepConstrained(hs);
+ 921              if (k + 1 &lt; sub) t_ += hs;
+ 922          }
+ 923      } else {
+ 924          stepSmooth(h);
+ 925          contacts_.clear();
+ 926          contactInfo_.clear();
+ 927      }
+ 928      t_ += tail;
+ 929      ++steps_;
+ 930      computeForces(S_, t_, F_, tau_, &amp;pv1, &amp;pd1, &amp;pin1);
+ 931      ledger_.workIn += 0.5 * (pin0 + pin1) * h;                    // trapezoid rule for the three power integrals
+ 932      ledger_.dViscous += 0.5 * (pv0 + pv1) * h;
+ 933      ledger_.dDrag += 0.5 * (pd0 + pd1) * h;
+ 934  
+ 935      for (size_t i = 0; i &lt; S_.size(); ++i) {
+ 936          const BodyState&amp; s = S_[i];
+ 937          if (!std::isfinite(s.pos.x) || !std::isfinite(s.pos.y) || !std::isfinite(s.vel.x) || !std::isfinite(s.vel.y) ||
+ 938              !std::isfinite(s.omega) || std::fabs(s.pos.x) &gt; 1e5 || std::fabs(s.pos.y) &gt; 1e5)
+ 939              healthy_ = false;
+ 940      }
+ 941      measure();
+ 942  }</pre></div>
+<p>The alternative, <em>continuous collision detection</em> (sweeping each shape through time to find the first contact), is exact but complex, and for the speeds this program meets sub-stepping is simpler and costs nothing when no body is fast.</p>
+<h1 class="chapter" id="c79"><span class="cn">Chapter 20</span><span class="ct">Advancing in Time</span></h1>
+
+<h2 id="s80">20.1  Two integrators, chosen automatically</h2>
+
+<p><code>World::usesConstraintSolver</code> decides which of two methods advances the world:</p>
+<ul>
+<li><strong>RK4</strong> (the classical fourth-order Runge-Kutta method, <code>stepSmooth</code>), for scenes with only smooth forces: springs, dampers, gravity, loads. It evaluates the forces four times per step and combines them with the weights 1, 2, 2, 1 over 6. Its error falls as the <em>fifth</em> power of the step, and the validation test shows the mass-spring-damper matches its exact solution to 8 × 10⁻¹³ m over 10 s. No constraint or contact is involved.</li>
+<li><strong>The constrained step</strong> (<code>stepConstrained</code>), as soon as there is a rod, pin, weld, roller, or two colliding bodies. It is <strong>semi-implicit (symplectic) Euler</strong> with the impulse solver in the middle, and its steps are:</li>
+</ul>
+<ol>
+<li>Compute the smooth forces and update the <strong>velocities</strong>: v ← v + (F/m) h.</li>
+<li>Apply the locks.</li>
+<li>Detect contacts and set up the impulses (warm starting).</li>
+<li>Run the solver: for 14 iterations, <code>solveJoints</code>, <code>solveContacts</code>, <code>applyLocks</code>.</li>
+<li>Do the energy accounting for the contacts (exact: ΔKE = P · (v<sub>before</sub> + v<sub>after</sub>) / 2 for every impulse).</li>
+<li>Update the <strong>positions</strong> from the new velocities: p ← p + v h.</li>
+<li>Correct the position drift (<code>correctPositions</code>).</li>
+</ol>
+<div class="co co-why"><div class="co-t">WHY?</div><p><strong>Why change the method when constraints appear, rather than always using the constraint path?</strong> RK4 is far more accurate for smooth systems, and the simplest examples (a mass on a spring) are what a student checks against a formula. Using the less accurate method for them would degrade the result for no reason. The automatic choice also means that <strong>adding a hinge to a pure spring system silently changes the integrator</strong>, which is why the torsional-spring test, which contains a pin, was validated at the constrained step's accuracy (0.4972 s against 0.4973 s), not RK4's.</p></div>
+<p><strong>Why velocities before positions?</strong> Updating the velocity first and then using the <em>new</em> velocity to move the position is the semi-implicit (symplectic) Euler method. Unlike explicit Euler (position from the <em>old</em> velocity) it conserves energy over long runs for oscillating systems, with no systematic gain or loss. That is essential for a program that reports an energy ledger.</p>
+<h2 id="s81">20.2  The energy ledger: the program checking itself</h2>
+
+<p>Every joule the program creates or destroys is recorded. The identity is</p>
+<div class="eq">E(t) = E<sub>0</sub> + W<sub>in</sub> − D<sub>viscous</sub> − D<sub>drag</sub> − D<sub>friction</sub> − D<sub>impact</sub> + ε <span class="tag">(5.11)</span></div>
+
+<p>with E = T + V the kinetic plus potential energy, W<sub>in</sub> the work of the loads, the D terms the heat from each loss channel, and ε the numerical error, which is the only unexplained term. <code>ledger_.numerical()</code> returns ε. The validation suite fails the build if ε exceeds a small fraction of the energy that moved in <strong>any</strong> example.</p>
+<p>The ledger is also how every generalization in this chapter was checked. When the distribution code was first written, the energy of ordinary springs jumped, and the ledger test failed: a copy-and-paste mistake used the wrong attachment point when a link was <em>not</em> a distribution. Without the ledger that error would have been invisible, because the motion still <em>looked</em> reasonable.</p>
+<h1 class="chapter" id="c82"><span class="cn">Chapter 21</span><span class="ct">Making and Keeping It General: Testing</span></h1>
+
+<p>Generality is a claim about <strong>every</strong> system, and it can only be tested on particular ones. The validation suite (<code>tests/core_tests.cpp</code>) is therefore built on one principle: <strong>for every kind of element there is a system whose answer is known in closed form, and the program must reproduce it.</strong></p>
+<table>
+<thead>
+<tr>
+<th>Generalization</th>
+<th>Closed-form check</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Mass-spring-damper</td>
+<td>x(t) = e<sup>−ζω t</sup>(cos ω<sub>d</sub> t + …) to 10⁻¹²</td>
+</tr>
+<tr>
+<td>Pendulum on a rod</td>
+<td>period 2π√(L/g) (with the large-angle correction)</td>
+</tr>
+<tr>
+<td>Hinged beam</td>
+<td>period 2π√(I/(m g d))</td>
+</tr>
+<tr>
+<td>Spring distribution (constant)</td>
+<td>K = k ℓ: oscillates at √(kℓ/m)</td>
+</tr>
+<tr>
+<td>Spring distribution (linear)</td>
+<td>K = m ℓ²/2: the same frequency from a different distribution</td>
+</tr>
+<tr>
+<td>Torsional spring</td>
+<td>quarter period (π/2)√(I/k<sub>t</sub>)</td>
+</tr>
+<tr>
+<td>Constant moment</td>
+<td>ω = M t / I</td>
+</tr>
+<tr>
+<td>F(t) = 3t²</td>
+<td>v = t³ / m</td>
+</tr>
+<tr>
+<td>M(t) = 4t</td>
+<td>ω = 2t² / I</td>
+</tr>
+<tr>
+<td>Elastic collision</td>
+<td>momentum and kinetic energy both conserved</td>
+</tr>
+<tr>
+<td>Rubber ball</td>
+<td>rebound height e² h</td>
+</tr>
+<tr>
+<td>Every example</td>
+<td>the energy ledger closes</td>
+</tr>
+</tbody>
+</table>
+<p>When a new element is added, the <strong>first thing written is its test</strong>, and the test is a system the reader could check on paper. If the answer cannot be found on paper, the element is probably too complicated to trust.</p>
+<h1 class="chapter" id="c83"><span class="cn">Chapter 22</span><span class="ct">Recipe: Adding a New Element to the Engine</span></h1>
+
+<p>The torsional spring, the distributions and the time-varying loads were all added with the same recipe. Follow it for anything new (a rotational damper, a one-way spring, a gap element, a wind load).</p>
+<ol>
+<li><strong>Write the physics on paper first.</strong> Give the energy (or the dissipation function, or the work) in terms of the state, and differentiate. Check the signs against the clockwise-positive, y-down convention. Predict a closed-form result you can test.</li>
+<li><strong>Add the data to the model</strong> (<code>model.hpp</code>): as new fields on <code>Link</code> or <code>Body</code> with defaults that mean "off". A default of zero or empty means that <strong>old files and old code are unaffected</strong>.</li>
+<li><strong>Add the force or constraint to the engine</strong> (<code>world.cpp</code>): a smooth force in <code>computeForces</code> and its energy in <code>potentialEnergy</code>; a constraint in <code>solveJoints</code> or <code>solveContacts</code>. Keep the force loop and the energy loop in step.</li>
+<li><strong>Account for its power in the ledger.</strong> A load adds F·v or M·ω to the work-in integral; a dissipative element adds its heat to the right loss channel.</li>
+<li><strong>Save and load it</strong> (<code>project_io.cpp</code>): append the new fields to the <em>end</em> of the body or link line and read them only if the line is long enough (<code>f.size() &gt; n</code>). Files saved by older versions then open unchanged.</li>
+<li><strong>Write the test</strong> in <code>core_tests.cpp</code>, build, and run <code>vlab_tests.exe</code>. A new element is not finished until the suite passes <strong>and</strong> the ledger test still passes.</li>
+<li><strong>Add the interface</strong>: a tool or a field in the properties panel, how it is drawn, how it is picked (clicking it must select it), how it is deleted. The picking function (<code>App::pickLink</code>) was extended for distributions after a user could not select them; always test the <em>click</em>, not just the physics.</li>
+<li><strong>Document it</strong> in the guide, and then <strong>publish</strong> (next chapter): rebuild, repackage, sync the Unreal plugin, commit and push.</li>
+</ol>
+<div class="co co-try"><div class="co-t">TRY IT</div><p><strong>Try it.</strong> Add a <em>rotational damper</em> to the hinge: a torque −c<sub>θ</sub> ω<sub>rel</sub>. Hint: the Pin already has a rotary damper, <code>jointC</code>. Read how <code>computeForces</code> uses it (the variable <code>Tc</code>), how the dissipation power is added to <code>pv</code>, and why the damper only acts when <code>env.damping</code> is on. Then write down which test would prove it correct (a hinged beam with only the rotary damper should decay as e<sup>−c t / 2I</sup> in angular velocity).</p></div>
+<h1 class="chapter" id="c84"><span class="cn">Chapter 23</span><span class="ct">Whys and Why-Nots at a Glance</span></h1>
+
+<table>
+<thead>
+<tr>
+<th>Decision</th>
+<th>What was chosen</th>
+<th>Main alternative</th>
+<th>Why the choice</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Coordinates</td>
+<td>x, y, θ for every body</td>
+<td>Minimal (generalized) coordinates</td>
+<td>The user changes the system at run time; loops and contacts are trivial</td>
+</tr>
+<tr>
+<td>Attachment points</td>
+<td>In each body's local frame</td>
+<td>In world coordinates</td>
+<td>Rotation and orientation become automatic</td>
+</tr>
+<tr>
+<td>Forces</td>
+<td>Derived from an energy, written once per element kind</td>
+<td>One equation per system</td>
+<td>Works for any system; checkable</td>
+</tr>
+<tr>
+<td>One link structure</td>
+<td>A tagged struct</td>
+<td>A class hierarchy</td>
+<td>Copyable, savable, no virtual machinery</td>
+</tr>
+<tr>
+<td>Constraints</td>
+<td>Sequential impulses</td>
+<td>Penalty springs / Lagrange multipliers</td>
+<td>No stiff time step, no matrix, handles contact churn</td>
+</tr>
+<tr>
+<td>Locks</td>
+<td>Zero inverse mass on an axis</td>
+<td>Special equations for rails</td>
+<td>Every constraint respects every lock for free</td>
+</tr>
+<tr>
+<td>Collision detection</td>
+<td>SAT with edge clipping</td>
+<td>GJK, signed distance fields</td>
+<td>Two stable contact points per resting box</td>
+</tr>
+<tr>
+<td>Integrator</td>
+<td>RK4 or symplectic Euler, automatically</td>
+<td>One method for everything</td>
+<td>Accuracy for smooth systems, energy behaviour for constrained ones</td>
+</tr>
+<tr>
+<td>Time loads</td>
+<td>A small formula language</td>
+<td>An embedded script engine</td>
+<td>Cannot hang, no dependency, bounded behaviour</td>
+</tr>
+<tr>
+<td>Distributions</td>
+<td>N elements, midpoint rule</td>
+<td>One equivalent spring, FE foundation</td>
+<td>Exact for constant and linear; gives rotation for free</td>
+</tr>
+<tr>
+<td>Tunnelling</td>
+<td>Adaptive sub-stepping</td>
+<td>Continuous collision detection</td>
+<td>Simpler, free when nothing is fast</td>
+</tr>
+<tr>
+<td>Verification</td>
+<td>Energy ledger and closed-form tests</td>
+<td>Visual inspection</td>
+<td>A result that cannot be checked is not a result</td>
+</tr>
+</tbody>
+</table>
+<h1 class="chapter" id="c85"><span class="cn">Chapter 24</span><span class="ct">Updating and Editing the Suite</span></h1>
+
+<p>This chapter is the maintainer's manual. It explains, from a clean checkout to a published release, <strong>how a change to the Vibration Lab Suite is made, tested, built, packaged and pushed</strong>, and what to do when a step fails. Every command here is one that was actually used to ship version 1.2, including the failures, which are described because they are the most useful part.</p>
+<div class="co co-note"><div class="co-t">NOTE</div><p><strong>Two destinations, always.</strong> A change is only finished when it has reached <strong>both</strong> places: the <strong>repository</strong> (the source, so others can see and build it) and the <strong>build</strong> (the packaged program in the <code>dist</code> folder, so people can run it). Doing one without the other is the most common mistake, and the last section of this chapter shows how to check that both are current.</p></div>
+<h1 class="chapter" id="c86"><span class="cn">Chapter 25</span><span class="ct">The Map: Where Everything Lives</span></h1>
+
+<p>The suite is one folder, <code>vlab-suite</code>, inside the larger NOVA project. The parts that matter:</p>
+<table>
+<thead>
+<tr>
+<th>Folder or file</th>
+<th>What it is</th>
+<th>Edit it when</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>core/include/vlab/<em>.hpp</code>, <code>core/src/</em>.cpp</code></td>
+<td><strong>The engine.</strong> Bodies, links, forces, constraints, contacts, analysis, saving and loading. No window, no operating-system code.</td>
+<td>You change the physics or the file format</td>
+</tr>
+<tr>
+<td><code>app/*.cpp</code>, <code>app/app.hpp</code></td>
+<td><strong>The program you see.</strong> The canvas, panels, plots, recording. Uses Dear ImGui.</td>
+<td>You change the interface</td>
+</tr>
+<tr>
+<td><code>io/</code></td>
+<td>Excel, CSV and schematic export</td>
+<td>You change what is exported</td>
+</tr>
+<tr>
+<td><code>tests/core_tests.cpp</code></td>
+<td><strong>The validation suite.</strong> Every physics claim, checked against theory</td>
+<td>Always, when you add or change physics</td>
+</tr>
+<tr>
+<td><code>tools/cli.cpp</code></td>
+<td>A command-line runner (no window)</td>
+<td>Rarely</td>
+</tr>
+<tr>
+<td><code>tools/package.py</code></td>
+<td><strong>The release script.</strong> Builds, tests and packages</td>
+<td>You change what ships</td>
+</tr>
+<tr>
+<td><code>CMakeLists.txt</code>, <code>app/app.cmake</code></td>
+<td>The build description</td>
+<td>You add a source file</td>
+</tr>
+<tr>
+<td><code>third_party/</code></td>
+<td>Dear ImGui and ImPlot, copied in (never edit)</td>
+<td>You upgrade a library</td>
+</tr>
+<tr>
+<td><code>ue5/</code></td>
+<td>The <strong>Unreal Engine plugin</strong>. It contains a <em>copy</em> of the engine in <code>ue5/VLab/Source/VLabRuntime/ThirdParty</code></td>
+<td>Never directly: it is overwritten by the sync script</td>
+</tr>
+<tr>
+<td><code>build/</code></td>
+<td>Build output. <strong>Never committed</strong></td>
+<td>Never</td>
+</tr>
+<tr>
+<td><code>dist/</code></td>
+<td><strong>The released package</strong>: the program, tools, examples, documents. Committed</td>
+<td>By the packaging script only</td>
+</tr>
+<tr>
+<td><code>dist-1.2/</code></td>
+<td>A second, uncommitted copy of the same package, used as a safety copy</td>
+<td>By the packaging script with <code>VLAB_DIST</code></td>
+</tr>
+<tr>
+<td><code>../docs/</code></td>
+<td>The books (this guide is <code>docs/src/suite/*.md</code>) and the PDFs built from them</td>
+<td>You change the documentation</td>
+</tr>
+</tbody>
+</table>
+<div class="co co-why"><div class="co-t">WHY?</div><p><strong>Why is the engine separate from the program?</strong> Because the same engine runs in the window, in the command-line tool, in the validation suite and inside the Unreal plugin. Anything that is <em>not</em> in <code>core</code> cannot be tested without a window, and a physics bug found in the window has to be reproduced there. Keeping the physics in <code>core</code> means every physics bug can be reproduced by a ten-line console program, which is how most of the bugs in this project were found (see "Reproduce before you fix").</p></div>
+<h1 class="chapter" id="c87"><span class="cn">Chapter 26</span><span class="ct">One-Time Setup</span></h1>
+
+<p>You need five tools. All are free.</p>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Used for</th>
+<th>How to check it works</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>MSYS2 with the mingw-w64 toolchain</strong> (g++ 15 was used)</td>
+<td>Compiling C++</td>
+<td><code>g++ --version</code></td>
+</tr>
+<tr>
+<td><strong>CMake</strong> (3.16 or newer)</td>
+<td>Describing the build</td>
+<td><code>cmake --version</code></td>
+</tr>
+<tr>
+<td><strong>Ninja</strong></td>
+<td>Running the build quickly</td>
+<td><code>ninja --version</code></td>
+</tr>
+<tr>
+<td><strong>Python 3</strong></td>
+<td>The packaging script and the guide builder</td>
+<td><code>python --version</code></td>
+</tr>
+<tr>
+<td><strong>Git</strong></td>
+<td>Version control</td>
+<td><code>git --version</code></td>
+</tr>
+</tbody>
+</table>
+<p>For the guide (PDF) you also need <strong>PyMuPDF</strong> (<code>pip install pymupdf</code>) and the project's Electron (installed by <code>npm install</code> in the NOVA folder), because the PDF is rendered by printing a web page.</p>
+<h2 id="s88">26.1  The one setup trap: the compiler must be on the PATH</h2>
+
+<p>The compiler lives in <code>C:\msys64\mingw64\bin</code>. If that folder is not on the PATH of the terminal you are using, the build fails in a confusing way: <code>g++</code> may simply exit with an error code and print nothing at all. This happened during the development of 1.2 in one shell (a sandboxed bash) while the same command worked in PowerShell once the folder was added. The fix is always the same, and it is worth putting at the top of every PowerShell session you use for building:</p>
+<div class="codewrap"><div class="code-t">powershell</div><pre class="code">$env:PATH = &quot;C:\msys64\mingw64\bin;$env:PATH&quot;</pre></div>
+<div class="co co-tip"><div class="co-t">TIP</div><p><strong>Test the compiler on a one-line program first.</strong> <code>echo int main(){return 0;} &gt; t.cpp</code> then <code>g++ t.cpp -o t.exe</code>. If <em>that</em> fails, nothing else will work and the problem is the environment, not your code.</p></div>
+<h1 class="chapter" id="c89"><span class="cn">Chapter 27</span><span class="ct">The Everyday Loop: Edit, Build, Test</span></h1>
+
+<p>Every change, large or small, goes round the same four-step loop. Do not skip steps to save time; the steps you skip are the ones that find the bug.</p>
+<ol>
+<li><strong>Edit</strong> the source.</li>
+<li><strong>Build</strong>: from the <code>vlab-suite</code> folder,</li>
+</ol>
+<div class="codewrap"><div class="code-t">powershell</div><pre class="code">cmake --build build</pre></div>
+<p>The first time on a new machine, configure first: <code>cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++</code>. After that <code>cmake --build build</code> compiles <strong>only the files that changed</strong> and relinks the four programs: the engine library, <code>vlab_cli.exe</code>, <code>vlab_tests.exe</code> and <code>vlab_suite.exe</code> (the window).
+3. <strong>Test</strong>: <code>.\build\vlab_tests.exe</code>. It prints every check as PASS or FAIL with the measured and theoretical numbers, and ends with a line such as <code>92 of 92 checks passed</code>. The exit code is 0 only if everything passed.
+4. <strong>Look at it</strong> in the real program: run <code>build\vlab_suite.exe</code>. A passing test proves the physics; only your own eyes prove the <em>click</em> works.</p>
+<div class="co co-warn"><div class="co-t">WATCH OUT</div><p><strong>Passing tests do not prove the interface works.</strong> Three of the bugs fixed in 1.2 were interface bugs that no test could see: a crash when a new connector was chosen (a list of names indexed past its end), a distribution that could not be clicked on, and a run time that kept coming back as 10 s because the saved last session restored it. Always exercise the thing you changed with the mouse.</p></div>
+<h2 id="s90">27.1  Reading a build error</h2>
+
+<p>Compiler messages look hostile but follow a pattern: <strong>file, line, column, then the problem</strong>. Read the <em>first</em> error only; the later ones are usually consequences. A real example from this project:</p>
+<div class="codewrap"><pre class="code">app/ui_canvas.cpp:784:32: error: use of deleted function &#x27;void ImDrawList::AddPolyline(...)&#x27;</pre></div>
+<p>The cause was a drawing call whose argument types matched a deliberately disabled overload in the library. The fix (drawing the curve as a series of short lines) took one edit. The habit to learn is: go to the line, read the message, change <strong>one</strong> thing, rebuild.</p>
+<h2 id="s91">27.2  Reproduce before you fix</h2>
+
+<p>When something behaves wrongly, <strong>do not edit the engine first</strong>. Write a small standalone program in a scratch folder that builds the model by hand and prints the numbers. Compile it against the engine with one command:</p>
+<div class="codewrap"><div class="code-t">powershell</div><pre class="code">g++ -std=c++17 -O2 -Icore/include repro.cpp (Get-ChildItem core/src/*.cpp).FullName -o repro.exe</pre></div>
+<p>Because the engine has no window code, this works for any physics question. The 1.2 collision work began exactly this way: a program that drove a block into a wall at different forces, printed where it ended up, and showed that the engine's behaviour at ordinary forces was right and that tunnelling happened only at absurd speeds. Without that program the temptation would have been to rewrite the contact solver, which was not at fault.</p>
+<h1 class="chapter" id="c92"><span class="cn">Chapter 28</span><span class="ct">Making a Change: The Full Checklist</span></h1>
+
+<p>The checklist below is the one used for every feature of 1.2 (distributions, torsional springs, moments, time-varying loads, the delete icon, the zoom buttons). Not every item applies to every change.</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Step</th>
+<th>Where</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Write down the expected behaviour and, for physics, a closed-form answer</td>
+<td>On paper</td>
+<td>A test you can check by hand cannot be wrong in the same way as the code</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Add data to the model with a default that means "off"</td>
+<td><code>core/include/vlab/model.hpp</code></td>
+<td>Old files and old code keep working</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Add the behaviour to the engine</td>
+<td><code>core/src/world.cpp</code> (or <code>expr.cpp</code>, etc.)</td>
+<td>The physics must be testable without a window</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Write the test</td>
+<td><code>tests/core_tests.cpp</code></td>
+<td>The test is the specification</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Save and load the new data</td>
+<td><code>core/src/project_io.cpp</code></td>
+<td>A feature that is lost when you save is not a feature</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Add the interface: a tool, a panel field, how it is drawn, how it is picked, how it is deleted</td>
+<td><code>app/ui_panels.cpp</code>, <code>app/ui_canvas.cpp</code>, <code>app/app.hpp</code></td>
+<td>The user cannot use what they cannot reach</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Build, run the validation suite, then use it in the window</td>
+<td></td>
+<td>See "The everyday loop"</td>
+</tr>
+<tr>
+<td>8</td>
+<td><strong>Sync the Unreal plugin</strong></td>
+<td><code>python ue5/sync_core.py</code></td>
+<td>The plugin holds its own copy of the engine</td>
+</tr>
+<tr>
+<td>9</td>
+<td>Update the guide</td>
+<td><code>docs/src/suite/*.md</code> and rebuild the PDF</td>
+<td>The documentation must match the program</td>
+</tr>
+<tr>
+<td>10</td>
+<td>Package</td>
+<td><code>python tools/package.py</code></td>
+<td>Produces <code>dist</code></td>
+</tr>
+<tr>
+<td>11</td>
+<td>Commit and push</td>
+<td>Git</td>
+<td>Publishes the source</td>
+</tr>
+</tbody>
+</table>
+<h2 id="s93">28.1  Save-file compatibility: the rule of appending</h2>
+
+<p>Files are plain text, one line per body and per link, with fields separated by tabs. The loader reads field <em>n</em> by position. The rule that has kept every old file working is therefore:</p>
+<div class="co co-def"><div class="co-t">KEY WORD</div><p><strong>Only ever append.</strong> A new field goes at the <strong>end</strong> of the line, and the loader reads it only if the line is long enough (<code>if (f.size() &gt; 49) ...</code>), otherwise it leaves the default. Never insert a field in the middle and never reorder: every later field would shift, and old files would silently load wrong numbers.</p></div>
+<p>The same rule explains a subtle behaviour: a design saved with a 10 s run time keeps 10 s when reopened, because the file stored a value. Changing a <em>default</em> in the code changes only designs that have no stored value.</p>
+<h1 class="chapter" id="c94"><span class="cn">Chapter 29</span><span class="ct">Packaging: What the Release Script Does</span></h1>
+
+<p><code>tools/package.py</code> turns the working tree into the thing people run. Run it from anywhere:</p>
+<div class="codewrap"><div class="code-t">powershell</div><pre class="code">$env:PATH = &quot;C:\msys64\mingw64\bin;$env:PATH&quot;
+python tools\package.py</pre></div>
+<p>It performs these steps in order, and stops at the first failure:</p>
+<ol>
+<li><strong>Configure and build</strong> with CMake and Ninja in Release mode (<code>-O2</code>). This always rebuilds anything stale, so the package can never contain an old binary.</li>
+<li><strong>Run the validation suite.</strong> If any check fails the script prints "validation suite FAILED: not packaging" and exits. <strong>This is a gate</strong>: a build that fails its physics tests cannot be released by accident. The suite's output is saved as <code>Documents\validation_report.txt</code> inside the package, so the report that ships is the report of the exact binary that ships.</li>
+<li><strong>Copy the programs</strong>: the window (<code>VibrationLabSuite.exe</code>), the command-line runner and the test runner (into <code>Tools</code>), with debug symbols stripped to save space.</li>
+<li><strong>Write every built-in example</strong> as a <code>.vlab</code> file into <code>Examples</code>, by asking the command-line runner to save each one. The examples therefore always match the code that defines them.</li>
+<li><strong>Check the Excel export</strong> on a fresh run (the structure always; the charts too if the Python library <code>openpyxl</code> is installed).</li>
+<li><strong>Copy the documents</strong>: the user guide PDF, the README and the third-party licences.</li>
+<li><strong>Copy the Unreal plugin</strong> from <code>ue5</code>.</li>
+<li><strong>Zip everything</strong> into <code>VibrationLabSuite-1.2-win64.zip</code>.</li>
+</ol>
+<p>The last two lines it prints name the zip and the executable. If you do not see them, the package was not produced.</p>
+<h2 id="s95">29.1  The version number</h2>
+
+<p>The version lives in two places that must agree: <code>VERSION = "1.2"</code> near the top of <code>tools/package.py</code> (it names the zip), and the cover text of the guide. Change both when you start a new release.</p>
+<h2 id="s96">29.2  The safety copy: VLAB_DIST</h2>
+
+<p>By default the package is written to <code>dist</code>. Setting the environment variable <code>VLAB_DIST</code> to another folder writes it there instead:</p>
+<div class="codewrap"><div class="code-t">powershell</div><pre class="code">$env:VLAB_DIST = &quot;$PWD\dist-1.2&quot;
+python tools\package.py
+Remove-Item Env:VLAB_DIST</pre></div>
+<p>During 1.2 the script was run twice per change: once for <code>dist</code> (committed) and once for <code>dist-1.2</code> (a convenient local copy to run from while <code>dist</code> is in use). Remember to remove the variable afterwards, or the next run will go to the wrong folder.</p>
+<h2 id="s97">29.3  The failure that teaches the most: the locked executable</h2>
+
+<p>If <strong>the program is running from <code>dist</code> while you package</strong>, Windows refuses to overwrite the running executable, and the script stops with:</p>
+<div class="codewrap"><pre class="code">PermissionError: [Errno 13] Permission denied: &#x27;...\dist\VibrationLabSuite\VibrationLabSuite.exe&#x27;</pre></div>
+<p>The script deletes the old package folder <em>before</em> copying the new files, so a failure at this point leaves <code>dist</code> <strong>half rebuilt</strong>: the README and tools gone, the old executable still there (locked). This happened in 1.2, and the half-built folder was committed by mistake with <code>git add -u</code>, which stages <em>deletions</em> as well as changes. The repository briefly held a broken package. The recovery was:</p>
+<div class="codewrap"><div class="code-t">powershell</div><pre class="code">git checkout &lt;last-good-commit&gt; -- dist     # restore the previous complete package
+git commit -m &quot;Restore dist/ after an interrupted packaging run&quot;
+git push</pre></div>
+<p>and then, with the program closed, running the packaging script again and committing the result.</p>
+<div class="co co-warn"><div class="co-t">WATCH OUT</div><p><strong>Before packaging, close every copy of VibrationLabSuite.</strong> Check with <code>Get-Process | Where-Object { $_.ProcessName -like "VibrationLab*" }</code>. If nothing is listed, packaging is safe. Never kill someone else's running window to make it work; ask them to close it.</p></div>
+<h1 class="chapter" id="c98"><span class="cn">Chapter 30</span><span class="ct">Keeping the Unreal Plugin in Step</span></h1>
+
+<p>The Unreal plugin does not link to the engine in <code>core</code>. It contains its <strong>own copy</strong> of the engine's source files, so that it can be built by Unreal's own build system. After <em>any</em> change to a file in <code>core/include</code> or <code>core/src</code>, run:</p>
+<div class="codewrap"><div class="code-t">powershell</div><pre class="code">python ue5\sync_core.py</pre></div>
+<p>It deletes the plugin's copy and copies the current engine in. Then commit the changed files under <code>ue5/</code> together with the engine change. If you forget, the desktop program and the Unreal plugin silently drift apart: the same model would behave differently in the two. The check is simple: after syncing, <code>git status</code> should show changes under <code>ue5/VLab/Source/VLabRuntime/ThirdParty</code> that mirror the changes under <code>core</code>.</p>
+<h1 class="chapter" id="c99"><span class="cn">Chapter 31</span><span class="ct">Git: Committing and Pushing</span></h1>
+
+<h2 id="s100">31.1  The state of the repository</h2>
+
+<p>Work happens on a <strong>branch</strong> (during 1.2 the branch was <code>v1.2-deformation</code>); the stable line is <code>main</code>. The branch has a <strong>remote</strong> called <code>origin</code>, the copy on GitHub. Four commands tell you where you are:</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Tells you</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>git status --short</code></td>
+<td>Which files changed (<code>M</code>), were added (<code>A</code>), deleted (<code>D</code>) or are not tracked (<code>??</code>)</td>
+</tr>
+<tr>
+<td><code>git branch --show-current</code></td>
+<td>Which branch you are on</td>
+</tr>
+<tr>
+<td><code>git log --oneline -5</code></td>
+<td>The last five commits</td>
+</tr>
+<tr>
+<td><code>git diff --stat</code></td>
+<td>A one-line-per-file summary of what you changed</td>
+</tr>
+</tbody>
+</table>
+<h2 id="s101">31.2  What to stage, and what never to</h2>
+
+<ul>
+<li><strong>Stage with <code>git add -u</code></strong> to include every <em>already tracked</em> file you modified or deleted (source, tests, and the files under <code>dist</code>). It never adds new files by accident, which is why it was used for 1.2.</li>
+<li><strong>Add a new file explicitly</strong>: <code>git add path\to\file</code>. A new source file, a new test, a new chapter must be added by name, or it will not be in the commit.</li>
+<li><strong>Never commit</strong> <code>build/</code> (it is in <code>.gitignore</code>), scratch programs, or <code>dist-1.2</code> (left untracked on purpose; <code>git status</code> shows it as <code>??</code>).</li>
+<li><strong>Read <code>git status</code> before every commit.</strong> An unexpected <code>D</code> (deleted) line is how the half-built <code>dist</code> was nearly published.</li>
+</ul>
+<div class="co co-why"><div class="co-t">WHY?</div><p><strong>Why is <code>dist</code> in the repository at all?</strong> Because the repository is also the place people download the finished program from. The cost is that every release makes large binary changes. The alternative, publishing zips as separate release downloads, keeps the repository small but needs a second step and a second place to look. The project chose one place.</p></div>
+<h2 id="s102">31.3  Writing the commit message</h2>
+
+<p>A commit message is the changelog you will want in a year. The pattern used throughout 1.2: a <strong>short first line</strong> that says what changed in the user's terms, a blank line, then bullets for the details.</p>
+<div class="codewrap"><pre class="code">Spring and damper distributions (constant or linear) and torsional springs
+
+- Spring/Damper links can be spread along a span (constant, or y = m x), N elements
+- Pin joints gain a torsional spring (kt); new Torsional spring connector
+- New Connections menu entries; properties panel fields; drawing; save/load
+- Tests: distribution stiffness = k x span and m span^2 / 2; torsion period</pre></div>
+<h2 id="s103">31.4  Committing and pushing</h2>
+
+<div class="codewrap"><div class="code-t">powershell</div><pre class="code">git status --short                         # read it
+git add -u                                 # tracked changes, including dist
+git add docs\src\suite\05-new-chapter.md   # any new file, by name
+git commit -m &quot;First line&quot; -m &quot;Details&quot;
+git push origin v1.2-deformation</pre></div>
+<p>The last line of <code>git push</code>'s output has the form <code>old..new  branch -&gt; branch</code>, for example <code>f7a0174..ac29427  v1.2-deformation -&gt; v1.2-deformation</code>. <strong>That line is your confirmation.</strong> If it is missing, nothing was pushed.</p>
+<h2 id="s104">31.5  Line-ending warnings</h2>
+
+<p>On Windows Git prints many lines such as <code>warning: LF will be replaced by CRLF the next time Git touches it</code>. They are about how line endings are stored and are harmless here. They are noisy, not errors; the real errors start with <code>error:</code> or <code>fatal:</code>.</p>
+<h2 id="s105">31.6  Merging to main</h2>
+
+<p>When the work on a branch is finished and tested, it is merged into <code>main</code>, normally through a <strong>pull request</strong> on GitHub (so that the change is reviewed and the history is clear). From the branch: <code>git push</code>, then open the pull request from <code>v1.2-deformation</code> into <code>main</code>. After the merge, a <strong>tag</strong> marks the release (<code>git tag v1.2</code> then <code>git push origin v1.2</code>), so that the exact source of every release can be found later. These two steps were not needed during development of 1.2, which all happened on one branch, but are the normal route to a public release.</p>
+<h1 class="chapter" id="c106"><span class="cn">Chapter 32</span><span class="ct">Updating This Guide</span></h1>
+
+<p>The guide you are reading is built from plain text. Each chapter is a Markdown file in <code>docs/src/suite/</code>, in the order of their file names (<code>01-welcome.md</code>, <code>02-design.md</code>, and so on). To change it, edit a file, then build:</p>
+<div class="codewrap"><div class="code-t">powershell</div><pre class="code">cd docs\src
+python build_suite_guide.py</pre></div>
+<p>The builder converts the Markdown to a web page, prints it to a PDF with the project's Electron, adds the contents page and the page numbers, and writes <code>docs/Vibration Lab Suite - User Guide.pdf</code>. The packaging script copies that PDF into <code>Documents</code>.</p>
+<p>A few conventions of the Markdown:</p>
+<ul>
+<li><code>#</code> starts a chapter, <code>##</code> a section.</li>
+<li>A line <code>::: note</code> to <code>:::</code> makes a call-out box. The kinds are <code>note</code>, <code>tip</code>, <code>warn</code>, <code>why</code>, <code>try</code>, <code>def</code> and <code>mapx</code> (a maths-to-code table).</li>
+<li>An equation is <code>&lt;div class="eq"&gt;...&lt;span class="tag"&gt;(5.1)&lt;/span&gt;&lt;/div&gt;</code>.</li>
+<li>A <strong>real source listing</strong> is one line: <code>@@src core/src/world.cpp | start-regex | end-regex</code>. The builder finds the first line matching the start pattern and the first line after it matching the end pattern (or <code>+N</code> for N lines) and copies them, with their real line numbers. If a pattern no longer matches, <strong>the build stops with an error</strong>, which is the point: a listing can never describe code that has since been renamed.</li>
+<li>A screenshot is <code>{{img:name.png|caption}}</code>.</li>
+</ul>
+<p>After changing the guide, commit the Markdown <em>and</em> the rebuilt PDF, and rebuild the package so that <code>dist</code> carries the new PDF.</p>
+<h1 class="chapter" id="c107"><span class="cn">Chapter 33</span><span class="ct">Troubleshooting a Release</span></h1>
+
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Cause</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>g++</code> exits with an error and prints nothing</td>
+<td>The compiler folder is not on the PATH of this terminal</td>
+<td><code>$env:PATH = "C:\msys64\mingw64\bin;$env:PATH"</code></td>
+</tr>
+<tr>
+<td><code>PermissionError ... VibrationLabSuite.exe</code></td>
+<td>The program is running from <code>dist</code></td>
+<td>Close it, restore <code>dist</code> if it was half rebuilt, package again</td>
+</tr>
+<tr>
+<td>"validation suite FAILED: not packaging"</td>
+<td>A physics check failed</td>
+<td>Read the FAIL line: it prints measured and expected values. Fix the code or the test, never the threshold alone</td>
+</tr>
+<tr>
+<td>A test that passed before now fails after an unrelated edit</td>
+<td>The edit changed behaviour, for example a copy-paste of attachment points in the energy function</td>
+<td>Use the energy-ledger test: it fails when forces and energy disagree. Compare the force loop with the energy loop</td>
+</tr>
+<tr>
+<td>The program shows an old value after you changed a default</td>
+<td>A saved <code>last_session.vlab</code> or a saved design holds the old value</td>
+<td>Change the loader to override it, or re-save the design. Defaults only apply to new designs</td>
+</tr>
+<tr>
+<td>A new tool crashes the program when chosen</td>
+<td>A table indexed by the tool number has no entry for it</td>
+<td>Search for arrays indexed by <code>(int)tool</code> and extend them (and bound-check them)</td>
+</tr>
+<tr>
+<td>The package works but the Unreal plugin differs</td>
+<td><code>ue5/sync_core.py</code> was not run</td>
+<td>Run it, commit <code>ue5/</code></td>
+</tr>
+<tr>
+<td><code>git push</code> says nothing was pushed or is rejected</td>
+<td>The branch moved on the remote, or you are on the wrong branch</td>
+<td><code>git fetch</code>, <code>git log --oneline origin/branch -3</code>, then merge or rebase before pushing. Never force-push to share a branch</td>
+</tr>
+<tr>
+<td>The PDF build stops with "start pattern not found"</td>
+<td>A listing refers to code that was renamed</td>
+<td>Update the <code>@@src</code> pattern to the new name</td>
+</tr>
+</tbody>
+</table>
+<h1 class="chapter" id="c108"><span class="cn">Chapter 34</span><span class="ct">The Release Checklist</span></h1>
+
+<p>Print this list. Every item was needed at least once during 1.2.</p>
+<ol>
+<li><code>git status --short</code>: no surprises, no unexpected <code>D</code> lines.</li>
+<li><code>cmake --build build</code> succeeds with no errors.</li>
+<li><code>.\build\vlab_tests.exe</code>: <strong>all checks pass</strong>, including the energy-ledger check for every example.</li>
+<li>Run <code>build\vlab_suite.exe</code> and use every feature you changed with the mouse, including selecting, editing, deleting and saving and reopening.</li>
+<li><code>python ue5\sync_core.py</code> if anything under <code>core</code> changed.</li>
+<li>Rebuild the guide if the documentation changed.</li>
+<li><strong>Close every running copy of the program.</strong></li>
+<li><code>python tools\package.py</code>: ends with the <code>PACKAGED:</code> lines, and reports all checks passed.</li>
+<li>Optionally the safety copy: <code>VLAB_DIST</code> set to <code>dist-1.2</code>, package again, remove the variable.</li>
+<li><code>git status --short</code> again. The changes under <code>dist</code> should be modifications (<code>M</code>) only. Deletions mean the packaging was interrupted.</li>
+<li><code>git add -u</code>, add new files by name, <code>git commit</code> with a clear message.</li>
+<li><code>git push origin &lt;branch&gt;</code> and <strong>read the last line of its output</strong>.</li>
+<li>Confirm both destinations are current: <code>git log -1 --format=%h</code> equals <code>git log origin/&lt;branch&gt; -1 --format=%h</code>, and the executable in <code>dist</code> is newer than your last source change.</li>
+</ol>
+<div class="co co-why"><div class="co-t">WHY?</div><p><strong>Why so many steps for a small change?</strong> Each step catches a different class of mistake. The compiler catches typos, the tests catch wrong physics, the window catches wrong interfaces, the sync catches a diverging plugin, the packaging gate catches a broken release, and the final comparison catches the commonest slip of all: changes made and tested but never delivered. Each was added after the mistake it prevents actually happened.</p></div></body></html>

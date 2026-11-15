@@ -22,8 +22,10 @@ public:
     Telemetry& telemetry() { return tel_; }
     const Telemetry& telemetry() const { return tel_; }
 
+    void setCap(double seconds) { cap_ = seconds; }      // a temporary end time for an indefinite run (Compute all); cleared by stop()
+    double endTime() const { return design_.run.duration > 0 ? design_.run.duration : (cap_ > 0 ? cap_ : 1e300); }
     void start();                                        // build a fresh World from the design, clear telemetry, sample t = 0
-    void stop() { world_.reset(); }                      // forget the world (telemetry stays, so it can still be exported)
+    void stop() { world_.reset(); cap_ = 0; }                      // forget the world (telemetry stays, so it can still be exported)
     bool finished() const { return finished_; }          // the requested duration has been simulated
     double simTime() const { return world_ ? world_->time() : (tel_.rows() ? tel_.t.back() : 0.0); }
 
@@ -40,6 +42,7 @@ private:
     std::unique_ptr<World> world_;
     Telemetry tel_;
     bool finished_ = false;
+    double cap_ = 0;
     double acc_ = 0;                                     // simulated time not yet turned into whole steps
     long long sampleEvery_ = 1;
 };
@@ -58,7 +61,7 @@ template <class F> bool Session::runToEnd(F progress) {
         auto now = clock::now();
         if (std::chrono::duration<double>(now - last).count() > 0.05) {
             last = now;
-            if (!progress(design_.run.duration > 0 ? world_->time() / design_.run.duration : 1.0)) return false;
+            if (!progress(endTime() < 1e200 ? world_->time() / endTime() : 1.0)) return false;
         }
     }
     return true;
