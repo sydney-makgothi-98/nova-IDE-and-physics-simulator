@@ -449,6 +449,21 @@ void App::drawSidebar() {
         case Tool::SpringDist:
         case Tool::DamperDist: {
             const bool sp = tool == Tool::SpringDist;
+            ImGui::TextUnformatted("1. Select the grounded surface");
+            ImGui::TextUnformatted("2. Select the object face");
+            ImGui::Separator();
+            ImGui::TextUnformatted("Spring orientation");
+            ImGui::RadioButton("Free", &distOrient, 0);
+            ImGui::SameLine();
+            ImGui::RadioButton("Perpendicular", &distOrient, 1);
+            ImGui::SameLine();
+            ImGui::RadioButton("Angled", &distOrient, 2);
+            if (distOrient == 2) {
+                labelled("Angle (deg: 0 = right, 90 = down)");
+                ImGui::SetNextItemWidth(-1);
+                ImGui::DragFloat("##da", &distAngleDeg, 0.5f, -360.0f, 360.0f, "%.1f deg");
+            }
+            ImGui::Separator();
             ImGui::RadioButton("Constant", &nextDistMode, 1);
             ImGui::SameLine();
             ImGui::RadioButton("Linear  (y = m x)", &nextDistMode, 2);
@@ -459,9 +474,7 @@ void App::drawSidebar() {
                 labelled("Slope m (per metre along the span)");
                 ImGui::SetNextItemWidth(-1);
                 ImGui::DragFloat("##sl", &nextSlope, 1.0f, -1e6f, 1e6f, "%.1f");
-                ImGui::TextDisabled("value at distance x along the span = start value + m x");
             }
-            ImGui::TextDisabled("Spread over where the two bodies face each other.");
             break;
         }
         case Tool::TorsionSpring:
@@ -933,7 +946,7 @@ void App::drawProperties() {
         }
         if (l.kind == LinkKind::Weld) ImGui::TextDisabled("Holds the point AND the relative angle (%.1f deg).", l.refAngle * 180.0 / kPi);
         if (l.kind == LinkKind::Roller) ImGui::TextDisabled("The beam's point is held on a line: it can slide along the support's axis and rotate.");
-        if (l.kind == LinkKind::Spring || l.kind == LinkKind::Damper || l.kind == LinkKind::Rod) {
+        if ((l.kind == LinkKind::Spring || l.kind == LinkKind::Damper || l.kind == LinkKind::Rod) && !l.dist) {
             ImGui::Separator();
             ImGui::TextUnformatted("Where it attaches and which way it runs");
             const Vec2 wa = m.worldPoint(l.a, l.la), wb = m.worldPoint(l.b, l.lb), dd = wb - wa;

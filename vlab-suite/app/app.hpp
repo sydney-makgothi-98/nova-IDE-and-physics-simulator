@@ -134,6 +134,8 @@ struct App {
     float nextKd = 400.0f;               // spring distribution: stiffness per metre of span (N/m per m)
     float nextCd = 20.0f;                // damper distribution: damping per metre of span (N s/m per m)
     float nextSlope = 200.0f;            // linear distribution: change of the value per metre along the span
+    int distOrient = 1;                  // distribution orientation: 0 = free, 1 = perpendicular to the ground, 2 = at an angle
+    float distAngleDeg = 90.0f;
     int nextDistMode = 1;                // 1 = constant, 2 = linear (y = m x)
     float nextKt = 100.0f;               // torsional spring stiffness (N m/rad)
     void makeDistribution(int li, Vec2 wa, Vec2 wb);   // spread a new spring/damper over the faces of its two bodies

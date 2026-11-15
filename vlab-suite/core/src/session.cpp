@@ -33,8 +33,8 @@ void Session::syncLiveEdits() {
 
 double Session::advance(double seconds) {
     if (!world_ || finished_) return 0;
-    const double dt = world_->model().env.dt, end = design_.run.duration > 0 ? design_.run.duration : 1e300;   // 0 = indefinite
-    const bool indefinite = !(design_.run.duration > 0);
+    const double dt = world_->model().env.dt, end = endTime();   // 0 = indefinite (unless Compute all set a cap)
+    const bool indefinite = end > 1e200;
     double simulated = 0;
     acc_ += seconds;
     while (acc_ >= dt) {

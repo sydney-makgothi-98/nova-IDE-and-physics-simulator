@@ -89,6 +89,15 @@ int App::pickLink(Vec2 w) const {
         double aa, ab;
         if (!bodyPose(l.a, pa, aa) || !bodyPose(l.b, pb, ab)) continue;
         double d = segDist(w, pa + Rot(aa).apply(l.la), pb + Rot(ab).apply(l.lb));
+        if (l.dist) {                                                           // a distribution: any element, or either plate
+            const int N = l.distN();
+            for (int q = 0; q <= N; ++q) {
+                const double fr = (double)q / N;
+                d = std::min(d, segDist(w, pa + Rot(aa).apply(l.la + (l.la2 - l.la) * fr), pb + Rot(ab).apply(l.lb + (l.lb2 - l.lb) * fr)));
+            }
+            d = std::min(d, segDist(w, pa + Rot(aa).apply(l.la), pa + Rot(aa).apply(l.la2)));
+            d = std::min(d, segDist(w, pb + Rot(ab).apply(l.lb), pb + Rot(ab).apply(l.lb2)));
+        }
         if (d < bd) { bd = d; best = (int)i; }
     }
     return best;
@@ -487,7 +496,24 @@ void App::makeDistribution(int li, Vec2 wa, Vec2 wb) {
     if (s1 - s0 < 0.1) { s0 -= 0.25; s1 += 0.25; }
     auto world = [&](double d, double sPos) { return n * d + t * sPos; };
     auto loc = [&](int bi, Vec2 w) { Vec2 p; double a; bodyPose(bi, p, a); return Rot(a).applyInv(w - p); };
-    const Vec2 gA = world(dG, s0), gB = world(dG, s1), oA = world(dObj, s0), oB = world(dObj, s1);
+    double gs0 = s0, gs1 = s1, os0 = s0, os1 = s1, Lr = dObj - dG;
+    if (distOrient == 2) {                                                              // at an angle: every spring leans the same way
+        const double ar = distAngleDeg * kPi / 180.0;
+        Vec2 u(std::cos(ar), std::sin(ar));
+        double c = dot(n, u);
+        if (c < 0) { u = u * -1.0; c = -c; }
+        if (c > 0.05) {
+            Lr = (dObj - dG) / c;                                                       // spring length along its own direction
+            const double shift = -Lr * dot(t, u);                                       // where it meets the ground, sideways
+            gs0 = s0 + shift; gs1 = s1 + shift;
+        }
+    } else if (distOrient == 0) {                                                       // free: the springs fan between the two faces' own extents
+        os0 = o0; os1 = o1;
+        const double mid = 0.5 * (o0 + o1);
+        gs0 = std::max(g0, mid - 10.0); gs1 = std::min(g1, mid + 10.0);
+        if (gs1 - gs0 < 0.1) { gs0 = s0; gs1 = s1; }
+    }
+    const Vec2 gA = world(dG, gs0), gB = world(dG, gs1), oA = world(dObj, os0), oB = world(dObj, os1);
     const int ga = ig, ob = io;
     l.a = ga; l.b = ob;
     l.la = loc(ga, gA); l.la2 = loc(ga, gB);
@@ -495,7 +521,7 @@ void App::makeDistribution(int li, Vec2 wa, Vec2 wb) {
     l.dist = nextDistMode;
     l.distM = nextDistMode == 2 ? nextSlope : 0.0;
     if (nextDistMode == 2) { if (l.kind == LinkKind::Spring) l.k = 0; else l.c = 0; }       // y = m x: starts from zero at the first end
-    l.L0 = std::max(0.05, dObj - dG);
+    l.L0 = std::max(0.05, Lr);
     l.autoRest = false;
 }
 
@@ -1232,6 +1258,7 @@ void App::drawCanvas() {
     dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 44), pal.text, hud);
     if (tool == Tool::Select) dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 62), pal.dim, state == RunState::Design ? "Click to select, drag to move.  Wheel zooms, right-drag pans." : "Drag a body to push it with the mouse.");
     else if (linkFirst >= 0) dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 62), IM_COL32(90, 205, 255, 255), "Now click the second body.");
+    else if (tool == Tool::SpringDist || tool == Tool::DamperDist) dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 62), pal.dim, linkFirst < 0 ? "Click the grounded surface." : "Now click the object face. Esc cancels.");
     else if (isLinkTool(tool)) dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 62), pal.dim, "Click one body, then another. Esc cancels.");
     else if (tool == Tool::SupportPin || tool == Tool::SupportFixed || tool == Tool::SupportRoller) dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 62), pal.dim, "Click a beam or body: the support snaps to its ends and middle. Q / E turn it. Shift keeps the tool.");
     else dl->AddText(ImVec2(canvasMin.x + 10, canvasMin.y + 62), pal.dim, "Click to place. Q / E (or Ctrl+wheel) rotate it first. Shift keeps placing; Esc returns to Select; Alt ignores the grid.");
@@ -1271,7 +1298,7 @@ void App::drawCanvas() {
     }
     // ---- the small box for connections: where it attaches and which way it runs
     promptMin = promptMax = ImVec2(0, 0);
-    if (!recording && isLinkTool(tool)) {
+    if (!recording && isLinkTool(tool) && tool != Tool::SpringDist && tool != Tool::DamperDist) {
         const bool joint = tool == Tool::Pin || tool == Tool::Weld || tool == Tool::TorsionSpring;
         const char* what = tool == Tool::Spring ? "Spring" : tool == Tool::Damper ? "Damper" : tool == Tool::SpringDist ? "Spring distribution" : tool == Tool::DamperDist ? "Damper distribution" : tool == Tool::TorsionSpring ? "Torsional spring" : tool == Tool::Rod ? "Rigid rod" : tool == Tool::Pin ? "Pin joint" : "Fixed joint";
         ImVec2 pos(canvasMin.x + 10, canvasMin.y + 104);
