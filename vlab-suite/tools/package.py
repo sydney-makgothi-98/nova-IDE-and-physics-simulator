@@ -41,6 +41,14 @@ def main():
     if r.returncode != 0:
         sys.exit("validation suite FAILED: not packaging")
 
+    # ---- the system sheet: content, the one-degree-of-freedom result against the simulation, and the JPG / PNG / PDF export itself
+    r2 = subprocess.run([os.path.join(BUILD, "vlab_sheet_tests.exe")], capture_output=True, text=True)
+    open(os.path.join(PKG, "Documents", "validation_report.txt"), "a", encoding="utf-8").write("\n" + "=" * 70 + "\nSystem sheet checks\n" + "=" * 70 + "\n" + r2.stdout)
+    print(r2.stdout.strip().splitlines()[-1])
+    if r2.returncode != 0:
+        print(r2.stdout)
+        sys.exit("system sheet checks FAILED: not packaging")
+
     # ---- executables (stripped to save space)
     strip = shutil.which("strip")
     for exe, dst in (("vlab_suite.exe", "VibrationLabSuite.exe"), ("vlab_cli.exe", os.path.join("Tools", "vlab_cli.exe")), ("vlab_tests.exe", os.path.join("Tools", "vlab_tests.exe"))):

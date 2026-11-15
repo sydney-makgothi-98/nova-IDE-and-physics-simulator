@@ -208,6 +208,43 @@ std::string txt(const std::string& s) {
     return o;
 }
 
+// A formula the user typed (3*t^2 + 2*sin(2*pi*t)) as typeset math: pi -> the letter, * -> a dot, ^ -> a superscript, function names upright.
+std::string fmtExpr(const std::string& e) {
+    std::string o;
+    for (size_t i = 0; i < e.size();) {
+        const char c = e[i];
+        if (std::isalpha((unsigned char)c)) {
+            size_t j = i;
+            while (j < e.size() && std::isalpha((unsigned char)e[j])) ++j;
+            const std::string w = e.substr(i, j - i);
+            if (w == "pi") o += "\\pi ";
+            else if (isFunc(w) || w == "sqrt" || w == "abs" || w == "asin" || w == "acos") o += "\\rm{" + w + "}";
+            else o += w;                                                        // t, x, L stay italic variables
+            i = j;
+        } else if (c == '*') { o += "\\cdot "; ++i; }
+        else if (c == '^') {
+            ++i;
+            std::string ex;
+            if (i < e.size() && e[i] == '(') {
+                int d = 0;
+                size_t j = i;
+                for (; j < e.size(); ++j) { if (e[j] == '(') ++d; else if (e[j] == ')' && --d == 0) { ++j; break; } }
+                ex = e.substr(i + 1, j > i + 2 ? j - i - 2 : 0);
+                i = j;
+            } else {
+                size_t j = i;
+                if (j < e.size() && (e[j] == '-' || e[j] == '+')) ++j;
+                while (j < e.size() && (std::isalnum((unsigned char)e[j]) || e[j] == '.')) ++j;
+                ex = e.substr(i, j - i);
+                i = j;
+            }
+            o += "^{" + fmtExpr(ex) + "}";
+        } else if (c == '{' || c == '}' || c == '_' || c == '&' || c == ';') { ++i; }
+        else { o += c; ++i; }
+    }
+    return o;
+}
+
 std::string fnum(double v) {                                                  // 4 significant digits; powers of ten for the very large and small
     if (v == 0 || std::fabs(v) < 1e-12) return "0";
     char b[48];
@@ -357,11 +394,11 @@ Sheet buildSheet(const Model& m0, SheetKind kind, const SchematicOptions& diagra
             const std::string k = I(mi(bi));
             add("m_{" + k + "}", "= " + fnum(b2.massKg) + "\\,\\rm{kg}", bname(bi));
             if (!b2.lockRot) add("J_{" + k + "}", "= " + fnum(b2.inertia) + "\\,\\rm{kg\\,m}^{2}", "moment of inertia about the centre of mass");
-            std::string fixed;
-            if (b2.lockX) fixed += "x ";
-            if (b2.lockY) fixed += "y ";
-            if (b2.lockRot) fixed += "rotation ";
-            if (!fixed.empty()) add("", "", bname(bi) + ": " + fixed + "held fixed");
+            std::string fixedSym;
+            if (b2.lockX) fixedSym += "x_{" + k + "}";
+            if (b2.lockY) fixedSym += std::string(fixedSym.empty() ? "" : ",\\,") + "y_{" + k + "}";
+            if (b2.lockRot) fixedSym += std::string(fixedSym.empty() ? "" : ",\\,") + "\\theta_{" + k + "}";
+            if (!fixedSym.empty()) add(fixedSym, "\\rm{\\ held\\ fixed}", bname(bi) + ": rail or no spin");
             if (b2.vel.x != 0 || b2.vel.y != 0 || b2.omega != 0) {
                 std::string v = "= (" + fnum(b2.vel.x) + ", " + fnum(b2.vel.y) + ", " + fnum(b2.omega) + ")";
                 add("(\\dot x_{" + k + "},\\dot y_{" + k + "},\\dot \\theta_{" + k + "})(0)", v, "initial velocity of " + bname(bi));
@@ -373,7 +410,7 @@ Sheet buildSheet(const Model& m0, SheetKind kind, const SchematicOptions& diagra
             const std::string between = bname(l.a) + " and " + bname(l.b);
             if (l.kind == LinkKind::Spring && !l.dist) {
                 add("k_{" + k + "}", "= " + fnum(l.k) + "\\,\\rm{N/m}", "spring between " + between);
-                add("L_{0," + k + "}", "= " + fnum(l.L0) + "\\,\\rm{m}", "its rest length (the drawn length)");
+                add("L_{0," + k + "}", "= " + fnum(l.L0) + "\\,\\rm{m}", l.autoRest ? "its rest length (the drawn length)" : "its rest length (set by hand)");
                 if (l.k3 != 0) add("k_{3," + k + "}", "= " + fnum(l.k3) + "\\,\\rm{N/m}^{3}", "cubic stiffness");
             } else if (l.kind == LinkKind::Spring) {
                 add("k\xE2\x80\xB2_{" + k + "}", "= " + fnum(l.k) + "\\,\\rm{N/m\\,per\\,m}" + (l.dist == 2 ? "" : ""), std::string(l.dist == 2 ? "linear" : "constant") + " spring distribution, " + between);
@@ -399,13 +436,13 @@ Sheet buildSheet(const Model& m0, SheetKind kind, const SchematicOptions& diagra
             const std::string k = I(mi(bi));
             const double alpha = b2.loadAngleDeg + (b2.loadPull ? 180.0 : 0.0);
             if (b2.loadTimeVar) {
-                add("F_{" + k + "}(t)", "= " + b2.loadExpr + "\\,\\rm{N}", std::string(b2.loadPull ? "pull" : "push") + " on " + bname(bi) + " (t in seconds)");
+                add("F_{" + k + "}(t)", "= " + fmtExpr(b2.loadExpr) + "\\,\\rm{N}", std::string(b2.loadPull ? "pull" : "push") + " on " + bname(bi) + " (t in seconds)");
                 add("\\alpha_{" + k + "}", "= " + fnum(alpha) + "\xC2\xB0", "direction it acts in (0\xC2\xB0 right, 90\xC2\xB0 down)");
             } else if (b2.loadN > 0) {
                 add("F_{" + k + "}", "= " + fnum(b2.loadN) + "\\,\\rm{N}", std::string(b2.loadPull ? "pull" : "push") + " on " + bname(bi));
                 add("\\alpha_{" + k + "}", "= " + fnum(alpha) + "\xC2\xB0", "direction it acts in (0\xC2\xB0 right, 90\xC2\xB0 down)");
             }
-            if (b2.momentTimeVar) add("M_{" + k + "}(t)", "= " + b2.momentExpr + "\\,\\rm{N\\,m}", "moment on " + bname(bi) + " (clockwise positive)");
+            if (b2.momentTimeVar) add("M_{" + k + "}(t)", "= " + fmtExpr(b2.momentExpr) + "\\,\\rm{N\\,m}", "moment on " + bname(bi) + " (clockwise positive)");
             else if (b2.momentN != 0) add("M_{" + k + "}", "= " + fnum(b2.momentN) + "\\,\\rm{N\\,m}", "moment on " + bname(bi) + " (clockwise positive)");
             if (b2.driveF > 0) {
                 if (b2.driveT > 0) {
@@ -416,7 +453,7 @@ Sheet buildSheet(const Model& m0, SheetKind kind, const SchematicOptions& diagra
                 add("\\beta_{" + k + "}", "= " + fnum(b2.driveAngleDeg) + "\xC2\xB0", "direction of that push");
             }
             if (b2.dloadType != 0 && b2.shape.preset == ShapePreset::Box) {
-                if (b2.dloadType == DL_Equation) add("q_{" + k + "}(x)", "= " + b2.dloadExpr + "\\,\\rm{N/m}", "distributed load on " + bname(bi));
+                if (b2.dloadType == DL_Equation) add("q_{" + k + "}(x)", "= " + fmtExpr(b2.dloadExpr) + "\\,\\rm{N/m}", "distributed load on " + bname(bi));
                 else add("q_{" + k + "}", "= " + fnum(b2.dloadN) + "\\,\\rm{N/m}", "peak of the distributed load on " + bname(bi));
             }
         }
@@ -674,7 +711,7 @@ Sheet buildSheet(const Model& m0, SheetKind kind, const SchematicOptions& diagra
             if (!b.lockY) addTerm(ty, " + ", F + "\\sin\\alpha_{" + k + "}");
         }
         if (b.driveF > 0) {
-            const std::string F = b.driveT > 0 ? "F_{0," + k + "}\\sin(\\pi t/T_{" + k + "})" : "F_{0," + k + "}\\sin(\\omega_{" + k + "}t)";
+            const std::string F = b.driveT > 0 ? "F_{0," + k + "}\\sin(\\pi t/T_{" + k + "})" : "F_{0," + k + "}\\cos(\\omega_{" + k + "}t)";
             if (!b.lockX) addTerm(tx, " + ", F + "\\cos\\beta_{" + k + "}");
             if (!b.lockY) addTerm(ty, " + ", F + "\\sin\\beta_{" + k + "}");
         }
@@ -770,7 +807,7 @@ Sheet buildSheet(const Model& m0, SheetKind kind, const SchematicOptions& diagra
         const bool xFree = !b.lockX, yFree = !b.lockY;
         if (b.lockRot && (xFree != yFree)) {
             const Vec2 ax = xFree ? Vec2(1, 0) : Vec2(0, 1);
-            double K = 0, C = 0;
+            double K = 0, C = 0, preload = 0;                  // preload: force the springs already exert along the axis at the drawn position
             bool ok = true;
             for (const Elem& e : elems) {
                 const Link& l = m.links[e.li];
@@ -792,7 +829,13 @@ Sheet buildSheet(const Model& m0, SheetKind kind, const SchematicOptions& diagra
                     const Vec2 d = pb - pa;
                     if (length(d) < 1e-9 || std::fabs(dot(normalized(d), ax)) < 0.9999) ok = false;
                     if (!ok) break;
-                    if (l.kind == LinkKind::Spring) K += kk; else if (m.env.damping) C += kk;
+                    if (l.kind == LinkKind::Spring) {
+                        K += kk;
+                        if (!l.dist) {                                                      // a hand-set rest length leaves the spring stretched or squeezed at the drawn position
+                            const double ell = length(d), f = l.k * (ell - l.L0);
+                            preload += (e.A.body == bi ? 1.0 : -1.0) * f * dot(d * (1.0 / ell), ax);
+                        }
+                    } else if (m.env.damping) C += kk;
                 }
                 if (!ok) break;
             }
@@ -804,13 +847,14 @@ Sheet buildSheet(const Model& m0, SheetKind kind, const SchematicOptions& diagra
                 const double alpha = (b.loadAngleDeg + (b.loadPull ? 180.0 : 0.0)) * kPi / 180.0;
                 const Vec2 Fl = b.loadTimeVar ? Vec2(0, 0) : Vec2(std::cos(alpha), std::sin(alpha)) * b.loadN;
                 Fc += dot(Fl, ax);
+                Fc += preload;
                 const bool harm = b.driveF > 0 && b.driveT <= 0;
                 const double Fh = harm ? b.driveF * dot(Vec2(std::cos(b.driveAngleDeg * kPi / 180), std::sin(b.driveAngleDeg * kPi / 180)), ax) : 0.0;
                 const double mm = b.massKg, wn = std::sqrt(K / mm), zeta = C / (2 * std::sqrt(K * mm));
                 heading("Reduction to one degree of freedom:");
                 text("Every spring and damper lies along the free axis, so with $" + u + "$ measured from the drawn position they combine: $k_{eq} = \\sum k$ and $c_{eq} = \\sum c$.");
-                line("k_{eq} = " + fnum(K) + "\\,\\rm{N/m}, \\;\\; c_{eq} = " + fnum(C) + "\\,\\rm{N\\,s/m}, \\;\\; F_{c} = " + fnum(Fc) + "\\,\\rm{N}\\;\\;\\rm{(weight\\ and\\ constant\\ loads\\ along\\ the\\ axis)}");
-                line("m_{" + k + "}\\,\\ddot " + u + " + c_{eq}\\,\\dot " + u + " + k_{eq}\\," + u + " = F_{c}" + std::string(b.loadTimeVar ? " + F_{" + k + "}(t)\\cos\\alpha_{" + k + "}" : "") + std::string(harm ? " + F_{0," + k + "}\\sin(\\omega_{" + k + "}t)\\cos\\beta" : "") + ", \\;\\; " + fnum(mm) + "\\,\\ddot " + u + " + " + fnum(C) + "\\,\\dot " + u + " + " + fnum(K) + "\\," + u + " = " + fnum(Fc) + (b.loadTimeVar ? " + F(t)" : ""));
+                line("k_{eq} = " + fnum(K) + "\\,\\rm{N/m}, \\;\\; c_{eq} = " + fnum(C) + "\\,\\rm{N\\,s/m}, \\;\\; F_{c} = " + fnum(Fc) + "\\,\\rm{N}\\;\\;\\rm{(weight,\\ constant\\ loads\\ and\\ spring\\ preload\\ along\\ the\\ axis)}");
+                line("m_{" + k + "}\\,\\ddot " + u + " + c_{eq}\\,\\dot " + u + " + k_{eq}\\," + u + " = F_{c}" + std::string(b.loadTimeVar ? " + F_{" + k + "}(t)\\cos\\alpha_{" + k + "}" : "") + std::string(harm ? " + F_{0," + k + "}\\cos(\\omega_{" + k + "}t)\\cos\\beta" : "") + ", \\;\\; " + fnum(mm) + "\\,\\ddot " + u + " + " + fnum(C) + "\\,\\dot " + u + " + " + fnum(K) + "\\," + u + " = " + fnum(Fc) + (b.loadTimeVar ? " + F(t)" : ""));
                 text("Shifting to the equilibrium position gives the standard form, with natural frequency, damping ratio and static offset:");
                 line("\\xi = " + u + " - \\f{F_{c}}{k_{eq}}, \\;\\; \\ddot\\xi + 2\\zeta\\omega_{n}\\dot\\xi + \\omega_{n}^{2}\\xi = \\f{F(t)}{m}, \\;\\; \\omega_{n} = \\sqrt{\\f{k_{eq}}{m}} = " + fnum(wn) + "\\,\\rm{rad/s}, \\;\\; \\zeta = \\f{c_{eq}}{2\\sqrt{k_{eq}m}} = " + fnum(zeta) + ", \\;\\; " + u + "_{eq} = " + fnum(Fc / K) + "\\,\\rm{m}");
                 const double v0 = dot(b.vel, ax), xi0 = -Fc / K;
@@ -827,7 +871,7 @@ Sheet buildSheet(const Model& m0, SheetKind kind, const SchematicOptions& diagra
                     const double w = b.driveW, X = Fh / std::sqrt((K - mm * w * w) * (K - mm * w * w) + C * w * C * w);
                     const double ph = std::atan2(C * w, K - mm * w * w);
                     line("\\rm{steady\\ state:}\\;\\; X = \\f{F_{0}\\cos\\beta}{\\sqrt{(k_{eq} - m\\omega^{2})^{2} + (c_{eq}\\omega)^{2}}} = " + fnum(X) + "\\,\\rm{m}, \\;\\; \\varphi = \\rm{atan2}(c_{eq}\\omega,\\ k_{eq} - m\\omega^{2}) = " + fnum(ph) + "\\,\\rm{rad}");
-                    line(u + "(t) \\to " + fnum(Fc / K) + " + " + fnum(X) + "\\sin(" + fnum(w) + "\\,t - " + fnum(ph) + ")\\;\\rm{m}\\;\\;\\rm{plus\\ the\\ decaying\\ transient\\ above}", "final");
+                    line(u + "(t) \\to " + fnum(Fc / K) + " + " + fnum(X) + "\\cos(" + fnum(w) + "\\,t - " + fnum(ph) + ")\\;\\rm{m}\\;\\;\\rm{plus\\ the\\ decaying\\ transient\\ above}", "final");
                 } else {
                     text("The load $F(t)$ is a formula, so the response is the sum of the free vibration above and the convolution $\\xi_p(t) = \\int_0^t \\f{F(\\tau)}{m\\omega_d}e^{-\\zeta\\omega_n(t-\\tau)}\\sin\\omega_d(t-\\tau)\\,\\rm{d}\\tau$; the simulation integrates it numerically.");
                 }
@@ -871,9 +915,13 @@ std::string findBrowser() {
     return std::string();
 }
 
+// What happened when a command was run
+struct RunInfo { bool started = false; bool timedOut = false; DWORD exitCode = 0; DWORD error = 0; };
+
 // Runs a command with no window. The program has no console of its own, so the child is given explicit standard handles
 // (nothing to read, and a log file for what it prints): a browser started without valid handles can quit at once.
-bool runWait(const std::wstring& cmdline, DWORD timeoutMs, const std::wstring& logPath = std::wstring()) {
+RunInfo runWait(const std::wstring& cmdline, DWORD timeoutMs, const std::wstring& logPath = std::wstring()) {
+    RunInfo info;
     SECURITY_ATTRIBUTES sa{};
     sa.nLength = sizeof sa;
     sa.bInheritHandle = TRUE;
@@ -889,26 +937,50 @@ bool runWait(const std::wstring& cmdline, DWORD timeoutMs, const std::wstring& l
     si.hStdError = out;
     PROCESS_INFORMATION pi{};
     std::wstring c = cmdline;
-    const BOOL ok = CreateProcessW(nullptr, &c[0], nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+    // The child gets our environment minus the Windows compatibility-shim variables (__COMPAT_LAYER and friends). Windows sets them on a program
+    // it has put under a compatibility layer (for example "DetectorsAppHealth"); a browser that inherits one exits at once without doing anything.
+    std::wstring envBlock;
+    if (LPWCH env = GetEnvironmentStringsW()) {
+        for (const wchar_t* e = env; *e; e += wcslen(e) + 1) {
+            const std::wstring entry = e;
+            if (entry.compare(0, 9, L"__COMPAT_") == 0 || entry.compare(0, 10, L"__PROCESS_") == 0) continue;
+            envBlock += entry;
+            envBlock += L'\0';
+        }
+        envBlock += L'\0';
+        FreeEnvironmentStringsW(env);
+    }
+    const BOOL ok = CreateProcessW(nullptr, &c[0], nullptr, nullptr, TRUE, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, envBlock.empty() ? nullptr : (LPVOID)envBlock.data(), nullptr, &si, &pi);
+    info.error = ok ? 0 : GetLastError();
     if (in != INVALID_HANDLE_VALUE) CloseHandle(in);
     if (out != INVALID_HANDLE_VALUE) CloseHandle(out);
-    if (!ok) return false;
+    if (!ok) return info;
+    info.started = true;
     DWORD r = WaitForSingleObject(pi.hProcess, timeoutMs);
-    if (r == WAIT_TIMEOUT) TerminateProcess(pi.hProcess, 1);
+    if (r == WAIT_TIMEOUT) { info.timedOut = true; TerminateProcess(pi.hProcess, 1); }
+    GetExitCodeProcess(pi.hProcess, &info.exitCode);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
-    return r != WAIT_TIMEOUT;
+    return info;
+}
+
+std::string describe(const RunInfo& r) {
+    if (!r.started) return "could not start (Windows error " + std::to_string(r.error) + ")";
+    if (r.timedOut) return "timed out after the allowed time";
+    char b[64];
+    std::snprintf(b, sizeof b, "exit code 0x%lX", (unsigned long)r.exitCode);
+    return b;
 }
 
 // the last few lines of a log, for an error message
-std::string logTail(const std::string& path) {
+std::string logTail(const std::string& path, size_t n = 300) {
     std::ifstream f(path, std::ios::binary);
     std::stringstream ss;
     ss << f.rdbuf();
     std::string t = ss.str();
     std::string keep;
     for (char c : t) keep += (c == '\r' ? ' ' : c);
-    if (keep.size() > 300) keep = keep.substr(keep.size() - 300);
+    if (keep.size() > n) keep = keep.substr(keep.size() - n);
     while (!keep.empty() && (keep.back() == '\n' || keep.back() == ' ')) keep.pop_back();
     return keep;
 }
@@ -951,43 +1023,32 @@ bool renderSheet(const Sheet& s, const std::string& outPath, SheetFormat format,
     GetTempPathA(MAX_PATH, tmp);
     const std::string dir = std::string(tmp) + "vlab_sheet_" + std::to_string(GetTickCount64());
     CreateDirectoryW(widen(dir).c_str(), nullptr);
-    const std::string page = dir + "\\page.html", prof = dir + "\\profile", dom = dir + "\\dom.txt", png = dir + "\\shot.png", ps = dir + "\\convert.ps1", log = dir + "\\browser.log";
+    const std::string page = dir + "\\page.html", dom = dir + "\\dom.txt", png = dir + "\\shot.png", ps = dir + "\\convert.ps1", log = dir + "\\browser.log";
     {
         std::ofstream f(page, std::ios::binary);
-        if (!f) return fail("cannot write the temporary page");
+        if (!f) return fail("cannot write the temporary page in " + dir);
         f << s.html;
     }
-    const std::string q = "\"";
-    const std::string common = q + exe + q + " --headless --disable-gpu --no-first-run --disable-extensions --user-data-dir=" + q + prof + q;
-    DeleteFileA(outPath.c_str());
-
-    if (pdf) {
-        const std::string cmd = common + " --no-pdf-header-footer --virtual-time-budget=6000 --print-to-pdf=" + q + outPath + q + " " + q + fileUrl(page) + q;
-        runWait(widen(cmd), 90000, widen(log));
-        const bool okPdf = fileExists(outPath);
-        const std::string why = okPdf ? std::string() : logTail(log);
-        rmTree(widen(dir));
-        if (!okPdf) return fail("the browser did not produce the PDF" + (why.empty() ? std::string(" (is the folder writable?)") : ": " + why));
-        return true;
-    }
-
-    // the page measures itself into <body data-h>: read it with --dump-dom so the screenshot is exactly tall enough
-    int height = 2400;
+    std::string trace;                                                        // what was tried, for sheet_debug.txt
+    auto note = [&](const std::string& t) { trace += t + "\r\n"; };
+    note("browser: " + exe);
+    note("page: " + page + " (" + std::to_string(s.html.size()) + " bytes, width " + std::to_string(s.width) + ")");
+    note("output: " + outPath);
     {
-        const std::string inner = q + common + " --window-size=" + std::to_string(s.width) + ",900 --virtual-time-budget=6000 --dump-dom " + q + fileUrl(page) + q + " > " + q + dom + q + q;
-        runWait(widen("cmd.exe /s /c " + inner), 90000, widen(log));
-        std::ifstream f(dom, std::ios::binary);
-        std::stringstream ss;
-        ss << f.rdbuf();
-        const std::string t = ss.str();
-        size_t a = t.find("data-h=\"");
-        if (a != std::string::npos) height = std::max(300, std::atoi(t.c_str() + a + 8));
+        char cwd[MAX_PATH] = {0};
+        GetCurrentDirectoryA(MAX_PATH, cwd);
+        note(std::string("working folder: ") + cwd);
+        for (const char* v : {"__COMPAT_LAYER", "TEMP", "USERPROFILE", "SESSIONNAME", "MSEDGE_OUTER_TAB_TAG"}) {
+            char b[512] = {0};
+            note(std::string("env ") + v + " = " + (GetEnvironmentVariableA(v, b, sizeof b) ? b : "(not set)"));
+        }
+        const RunInfo pr = runWait(widen("\"" + exe + "\" --version"), 20000, widen(log));
+        note("browser --version: " + describe(pr) + ", prints: " + logTail(log, 120));
+        DeleteFileA(log.c_str());
     }
-    const std::string shot = common + " --hide-scrollbars --force-device-scale-factor=2 --default-background-color=FFFFFFFF --window-size=" + std::to_string(s.width) + "," + std::to_string(height + 40)
-                             + " --virtual-time-budget=6000 --screenshot=" + q + png + q + " " + q + fileUrl(page) + q;
-    runWait(widen(shot), 90000, widen(log));
-    if (!fileExists(png)) { const std::string why = logTail(log); rmTree(widen(dir)); return fail("the browser did not produce the picture" + (why.empty() ? std::string() : ": " + why)); }
 
+    const std::string q = "\"";
+    if (!pdf) {
     {
         std::ofstream f(ps, std::ios::binary);
         f << "param($in,$out,$fmt)\r\n"
@@ -1016,16 +1077,73 @@ bool renderSheet(const Sheet& s, const std::string& outPath, SheetFormat format,
              "if ($fmt -eq 'png') { $o.Save($out,[System.Drawing.Imaging.ImageFormat]::Png) } else { $o.Save($out,$enc,$ep) }\r\n"
              "$o.Dispose(); $b.Dispose()\r\n";
     }
-    const std::string conv = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File " + q + ps + q + " " + q + png + q + " " + q + outPath + q + (format == SheetFormat::Png ? " png" : " jpg");
-    runWait(widen(conv), 90000, widen(log));
-    DeleteFileA(png.c_str());
-    DeleteFileA(ps.c_str());
-    DeleteFileA(dom.c_str());
-    DeleteFileA(page.c_str());
-    const bool okImg = fileExists(outPath);
-    const std::string why2 = okImg ? std::string() : logTail(log);
+    }
+
+    // Two tries: normal flags, then without the browser's own sandbox (a browser started by a program that runs elevated, or under some
+    // security software, refuses to start with it).
+    const char* variants[] = {"", " --no-sandbox --disable-setuid-sandbox", " --no-sandbox --disable-setuid-sandbox"};   // the third goes through cmd.exe
+    bool done = false;
+    std::string why;
+    for (int attempt = 0; attempt < 3 && !done; ++attempt) {
+        const std::string prof = dir + "\\profile" + std::to_string(attempt);
+        const std::string common = q + exe + q + " --headless --disable-gpu --no-first-run --disable-extensions --user-data-dir=" + q + prof + q + variants[attempt];
+        note(std::string("attempt ") + std::to_string(attempt + 1) + (variants[attempt][0] ? std::string(" with ") + variants[attempt] : std::string(" with the normal flags")));
+        DeleteFileA(outPath.c_str());
+        DeleteFileA(png.c_str());
+        const bool viaCmd = attempt == 2;
+        const auto launch = [&](const std::string& cmdline) {
+            const auto t0 = GetTickCount64();
+            const RunInfo ri = viaCmd ? runWait(widen("cmd.exe /s /c " + q + cmdline + q), 90000, widen(log)) : runWait(widen(cmdline), 90000, widen(log));
+            note("    took " + std::to_string((unsigned long long)(GetTickCount64() - t0)) + " ms" + (viaCmd ? " (through cmd.exe)" : ""));
+            return ri;
+        };
+        if (pdf) {
+            const std::string cmd = common + " --no-pdf-header-footer --virtual-time-budget=6000 --print-to-pdf=" + q + outPath + q + " " + q + fileUrl(page) + q;
+            const RunInfo r = launch(cmd);
+            note("  print to PDF: " + describe(r));
+            done = fileExists(outPath);
+            if (!done) why = "the browser did not produce the PDF (" + describe(r) + ")";
+            continue;
+        }
+        // the page measures itself into <body data-h>: read it with --dump-dom so the screenshot is exactly tall enough
+        int height = 2400;
+        {
+            const std::string inner = q + common + " --window-size=" + std::to_string(s.width) + ",900 --virtual-time-budget=6000 --dump-dom " + q + fileUrl(page) + q + " > " + q + dom + q + q;
+            const RunInfo r = runWait(widen("cmd.exe /s /c " + inner), 90000, widen(log));
+            std::ifstream f(dom, std::ios::binary);
+            std::stringstream ss;
+            ss << f.rdbuf();
+            const std::string t = ss.str();
+            size_t a = t.find("data-h=\"");
+            if (a != std::string::npos) height = std::max(300, std::atoi(t.c_str() + a + 8));
+            note("  measure the page: " + describe(r) + ", " + std::to_string(t.size()) + " bytes of output, height " + (a == std::string::npos ? std::string("not found (using 2400)") : std::to_string(height)));
+        }
+        const std::string shot = common + " --hide-scrollbars --force-device-scale-factor=2 --default-background-color=FFFFFFFF --window-size=" + std::to_string(s.width) + "," + std::to_string(height + 40)
+                                 + " --virtual-time-budget=6000 --screenshot=" + q + png + q + " " + q + fileUrl(page) + q;
+        const RunInfo r = launch(shot);
+        note("  screenshot: " + describe(r));
+        if (!fileExists(png)) { why = "the browser did not produce the picture (" + describe(r) + ")"; continue; }
+        const std::string conv = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File " + q + ps + q + " " + q + png + q + " " + q + outPath + q + (format == SheetFormat::Png ? " png" : " jpg");
+        const RunInfo rc = runWait(widen(conv), 90000, widen(log));
+        note("  convert: " + describe(rc));
+        done = fileExists(outPath);
+        if (!done) why = std::string("could not convert the picture to ") + (format == SheetFormat::Png ? "PNG" : "JPG") + " (" + describe(rc) + ")";
+    }
+
+    if (!done) {
+        const std::string tail = logTail(log);
+        why += tail.empty() ? std::string() : ": " + tail;
+        // leave the details next to where the file should have gone, so they can be sent for diagnosis
+        const size_t slash = outPath.find_last_of("\\/");
+        const std::string where = slash == std::string::npos ? std::string() : outPath.substr(0, slash + 1);
+        std::ofstream d(where + "sheet_debug.txt", std::ios::binary);
+        d << "System sheet export failed\r\n" << trace << "\r\nbrowser output:\r\n" << logTail(log, 4000) << "\r\n";
+        std::ofstream h(where + "sheet_debug.html", std::ios::binary);
+        h << s.html;
+        why += "  (details: " + where + "sheet_debug.txt)";
+    }
     rmTree(widen(dir));
-    if (!okImg) return fail(std::string("could not convert the picture to ") + (format == SheetFormat::Png ? "PNG" : "JPG") + (why2.empty() ? std::string() : ": " + why2));
+    if (!done) return fail(why);
     return true;
 }
 #else

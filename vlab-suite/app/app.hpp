@@ -89,6 +89,7 @@ struct App {
     bool schemNames = true, schemValues = true, schemArrows = false, schemLoads = true;   // schematic export options
     void exportSheet(bool full, int format);   // the system picture (full = + specifications and derivation); format 0 JPG, 1 PNG, 2 PDF
     int sheetFormat = 0;                 // 0 JPG, 1 PNG, 2 PDF
+    bool sheetNoOpen = false;            // (test hook) do not open the saved file
     std::string sheetDir;                // where those pictures are saved (empty: the Exports folder)
     void saveDataSettings();
     void loadDataSettings();

@@ -1,5 +1,5 @@
 Vibration Lab Suite 1.2 - validation report
-Generated 2026-11-15 15:40
+Generated 2026-11-15 16:29
 ======================================================================
 
 Vibration Lab Suite: validation suite
@@ -135,3 +135,44 @@ Moment loads and F(t) / M(t)
   [PASS] M(t) = 4 t: omega = 2 t^2 / I                  omega 6.0000, theory 6.0000 rad/s
 
 92 of 92 checks passed
+
+======================================================================
+System sheet checks
+======================================================================
+Sheet content
+  [PASS] full sheet has Specifications and Solution, no Problem     html 33562 bytes
+  [PASS] specifications list the masses, springs, dampers           m 5 and 3, k 200/120/150, c 6
+  [PASS] the constant push and the F(t) formula are listed          F = 40 N, F(t) = 60*sin(2*pi*1.5*t)
+  [PASS] derivation steps are present                               Lagrange, coordinates, energy, equations
+  [PASS] one equation per free coordinate (2 bodies, x only)        x equations for both masses
+  [PASS] the page has a full derivation (many lines)                41 lines
+  [PASS] diagram labelled with variables, subscripts and the F(t) load svg 6527 bytes
+  [PASS] the plain diagram still names and values the parts         names and values
+  [PASS] rotor: torsional spring, moment and joint equations        kt = 80, M(t), joint section
+  [PASS] rotor diagram: moment arrow and its label                  curved arrow
+One-degree-of-freedom reduction against the simulation
+  [PASS] sheet reduces to one degree of freedom                     section present
+  [PASS] sheet prints k_eq and c_eq                                 50 N/m, 1.2 N s/m
+  [PASS] sheet includes the spring preload in F_c                   F_c = -15 N (push 10 - preload 25)
+  [PASS] sheet prints wn, zeta and the equilibrium offset           wn 5, zeta 0.06, x_eq -0.3
+  [PASS] sheet prints the steady-state amplitude and phase          X 0.1242 m, phi 0.112 rad
+  [PASS] simulated steady state follows x_eq + X cos(wt - phi)      worst gap 2.37e-09 m over 10 s (mean offset -0.2946, x_eq -0.3000)
+  [PASS] simulated free response matches the closed form            worst gap 5.71e-13 m over 15 s
+Export to JPG, PNG and PDF (C:\Users\thabe\AppData\Local\Temp\vlab_sheet_tests)
+  [PASS] A_two_masses system JPG                                    2644x549 px, 142427 bytes
+  [PASS] A_two_masses system PNG                                    2644x549 px, 91164 bytes
+  [PASS] A_two_masses system PDF                                    27240 bytes
+  [PASS] A_two_masses full JPG                                      1948x8132 px, 1602723 bytes
+  [PASS] A_two_masses full PNG                                      1948x8132 px, 707959 bytes
+  [PASS] A_two_masses full PDF                                      256862 bytes
+  [PASS] B_rotor full JPG                                           1947x6747 px, 1336494 bytes
+  [PASS] B_rotor full PNG                                           1947x6747 px, 586668 bytes
+  [PASS] B_rotor full PDF                                           196982 bytes
+  [PASS] C_single_mass full JPG                                     1947x7869 px, 1574922 bytes
+  [PASS] C_single_mass full PNG                                     1947x7869 px, 674237 bytes
+  [PASS] C_single_mass full PDF                                     227181 bytes
+  [PASS] export with __COMPAT_LAYER set JPG                         written
+  [PASS] export with __COMPAT_LAYER set PNG                         written
+  [PASS] export with __COMPAT_LAYER set PDF                         written
+
+32 of 32 sheet checks passed

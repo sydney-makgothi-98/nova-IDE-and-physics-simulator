@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <d3d11.h>
 #include <dwmapi.h>
+#include <fstream>
 #include <string>
 #include "app.hpp"
 #include "imgui.h"
@@ -255,6 +256,18 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
             app.recordingsDir = dir;
         }
     }
+    std::string sheetTestDir;                                                   // "--sheet-test FOLDER": export the sheet (JPG, PNG, PDF) from inside the real app, write sheet_result.txt, quit
+    {
+        std::string cmd = GetCommandLineA();
+        size_t k = cmd.find("--sheet-test ");
+        if (k != std::string::npos) {
+            sheetTestDir = cmd.substr(k + 13);
+            while (!sheetTestDir.empty() && (sheetTestDir.front() == ' ' || sheetTestDir.front() == '"')) sheetTestDir.erase(sheetTestDir.begin());
+            while (!sheetTestDir.empty() && (sheetTestDir.back() == ' ' || sheetTestDir.back() == '"')) sheetTestDir.pop_back();
+        }
+    }
+    int sheetTestFrame = 0;
+    const bool cmdHasKeep = std::string(GetCommandLineA()).find("--keep-design") != std::string::npos;
     static std::string iniPath = app.docsDir + "\\layout.ini";
     io.IniFilename = iniPath.c_str();
     ImGui::LoadIniSettingsFromDisk(io.IniFilename);
@@ -279,6 +292,20 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
         app.frame(std::min(io.DeltaTime, 0.1f));
+        if (!sheetTestDir.empty() && ++sheetTestFrame == 20) {
+            if (cmdHasKeep == false) app.loadExample(2);
+            app.sheetDir = sheetTestDir;
+            app.sheetNoOpen = true;
+            std::string report;
+            for (int fmt = 0; fmt < 3; ++fmt) {
+                app.exportSheet(true, fmt);
+                report += app.toast.text + "\n";
+            }
+            app.exportSheet(false, 1);
+            report += app.toast.text + "\n";
+            std::ofstream(sheetTestDir + "\\sheet_result.txt") << report;
+            g_quit = true;
+        }
         ImGui::Render();
         g_ctx->OMSetRenderTargets(1, &g_rtv, nullptr);
         g_ctx->ClearRenderTargetView(g_rtv, clear);

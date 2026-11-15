@@ -52,6 +52,8 @@ struct Label {
     double w = 0;
     int side = 0;     // -1 left margin, +1 right margin
     double y = 0;
+    bool near = false;     // drawn right beside the part (target + off), no leader line: how a textbook figure names its variables
+    Pt off{0, 0};
 };
 
 // "m_{1}" -> m with a subscript 1 (SVG tspans); "x^{2}" -> superscript. Everything else is escaped text.
@@ -141,7 +143,7 @@ std::string schematicSvgString(const Model& m, const SchematicOptions& o) {
     auto worldOf = [&](int body, Vec2 local) { return m.bodies[body].pos + Rot(m.bodies[body].angle).apply(local); };
 
     std::ostringstream svg;
-    svg << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" << num(W) << "\" height=\"" << num(H) << "\" viewBox=\"0 0 " << num(W) << " " << num(H) << "\" font-family=\"" << (o.serif ? "Cambria Math, STIX Two Text, Times New Roman, serif" : "Segoe UI, Arial, sans-serif") << "\">\n";
+    svg << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" << num(W) << "\" height=\"@@H@@\" viewBox=\"0 0 " << num(W) << " @@H@@\" font-family=\"" << (o.serif ? "Cambria Math, STIX Two Text, Times New Roman, serif" : "Segoe UI, Arial, sans-serif") << "\">\n";
     svg << "<defs><marker id=\"ah\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"9\" markerHeight=\"9\" orient=\"auto-start-reverse\"><path d=\"M0,0 L10,5 L0,10 z\" fill=\"#222\"/></marker>"
         << "<marker id=\"ahl\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"5\" markerHeight=\"5\" orient=\"auto\"><path d=\"M0,0 L10,5 L0,10 z\" fill=\"#c0392b\"/></marker></defs>\n";
     svg << "<rect width=\"100%\" height=\"100%\" fill=\"#ffffff\"/>\n";
@@ -165,9 +167,9 @@ std::string schematicSvgString(const Model& m, const SchematicOptions& o) {
 
     const int fsz = S_ ? 27 : 17;                                                   // label size: the derivation sheet scales the picture down, so its letters start larger
     std::vector<Label> labels;
-    auto addLabel = [&](const std::string& text, Pt target, bool inside, Pt anchor) {
+    auto addLabel = [&](const std::string& text, Pt target, bool inside, Pt anchor, bool nearLabel = false, Pt off = Pt{0, 0}) {
         Label l;
-        l.text = text; l.target = target; l.inside = inside; l.anchor = anchor;
+        l.text = text; l.target = target; l.inside = inside; l.anchor = anchor; l.near = nearLabel; l.off = off;
         l.w = 0.5 * fsz * (double)visLen(text);
         labels.push_back(l);
     };
@@ -293,7 +295,12 @@ std::string schematicSvgString(const Model& m, const SchematicOptions& o) {
                     if (l.kind == LinkKind::Spring) std::snprintf(sy, sizeof sy, l.dist ? (l.dist == 2 ? "k\xE2\x80\xB2_{%d}(s)" : "k\xE2\x80\xB2_{%d}") : "k_{%d}", j);
                     else if (l.kind == LinkKind::Damper) std::snprintf(sy, sizeof sy, l.dist ? (l.dist == 2 ? "c\xE2\x80\xB2_{%d}(s)" : "c\xE2\x80\xB2_{%d}") : "c_{%d}", j);
                     else std::snprintf(sy, sizeof sy, "L_{%d}", j);
-                    addLabel(sy, mid, false, mid);
+                    Pt off{0, -24};
+                    if (l.kind == LinkKind::Damper) off = Pt{0, 40};
+                    const Pt dd = Bp - A;
+                    const double dl = len(dd);
+                    if (dl > 1 && std::fabs(dd.x) < 0.35 * dl) off = l.kind == LinkKind::Damper ? Pt{-40, 8} : Pt{40, 8};      // a vertical element: its labels go beside it
+                    addLabel(sy, mid, false, mid, true, off);
                 } else {
                     std::string t, v;
                     if (l.kind == LinkKind::Spring) { t = l.dist ? "Spring distribution" : "Spring"; v = "k = " + eng(l.k, l.dist ? "N/m per m" : "N/m"); }
@@ -321,7 +328,7 @@ std::string schematicSvgString(const Model& m, const SchematicOptions& o) {
             }
             svg << "<circle cx=\"" << num(at.x) << "\" cy=\"" << num(at.y) << "\" r=\"4.4\" fill=\"#fff\" stroke=\"" << ink << "\" stroke-width=\"1.8\"/>\n";
             if (o.names) {
-                if (S_ && l.kind == LinkKind::Pin && l.kt != 0) { char sy[32]; std::snprintf(sy, sizeof sy, "k_{t,%d}", sym.link[li]); addLabel(sy, at, false, at); }
+                if (S_ && l.kind == LinkKind::Pin && l.kt != 0) { char sy[32]; std::snprintf(sy, sizeof sy, "k_{t,%d}", sym.link[li]); addLabel(sy, at, false, at, true, Pt{34, -26}); }
                 else if (!S_) addLabel(l.kind == LinkKind::Pin ? "Pin support" : (l.kind == LinkKind::Weld ? "Fixed support" : "Roller support"), at, false, at);
             }
         } else if (l.kind == LinkKind::Pin || l.kind == LinkKind::Weld) {            // a joint between two bodies
@@ -329,7 +336,7 @@ std::string schematicSvgString(const Model& m, const SchematicOptions& o) {
             if (l.kind == LinkKind::Pin) svg << "<circle cx=\"" << num(at.x) << "\" cy=\"" << num(at.y) << "\" r=\"6\" fill=\"#fff\" stroke=\"" << ink << "\" stroke-width=\"2\"/>\n";
             else svg << "<rect x=\"" << num(at.x - 6) << "\" y=\"" << num(at.y - 6) << "\" width=\"12\" height=\"12\" fill=\"#222\"/>\n";
             if (o.names) {
-                if (S_ && l.kind == LinkKind::Pin && l.kt != 0) { char sy[32]; std::snprintf(sy, sizeof sy, "k_{t,%d}", sym.link[li]); addLabel(sy, at, false, at); }
+                if (S_ && l.kind == LinkKind::Pin && l.kt != 0) { char sy[32]; std::snprintf(sy, sizeof sy, "k_{t,%d}", sym.link[li]); addLabel(sy, at, false, at, true, Pt{34, -26}); }
                 else if (!S_) addLabel(l.kind == LinkKind::Pin ? "Pin joint" : "Fixed joint", at, false, at);
             }
         }
@@ -355,7 +362,10 @@ std::string schematicSvgString(const Model& m, const SchematicOptions& o) {
                 double rb = std::max(0.3, b.shape.boundingRadius()) * scale * 0.85;
                 Pt head = c - dir * rb, tail = head - dir * 95;
                 svg << "<line x1=\"" << num(tail.x) << "\" y1=\"" << num(tail.y) << "\" x2=\"" << num(head.x) << "\" y2=\"" << num(head.y) << "\" stroke=\"#c0392b\" stroke-width=\"3\" marker-end=\"url(#ahl)\"/>\n";
-                if (o.names) addLabel(label, tail + (head - tail) * 0.5, false, tail);
+                if (o.names) {
+                    if (S_) addLabel(label, tail + (head - tail) * 0.5, false, tail, true, Pt{0, -52});
+                    else addLabel(label, tail + (head - tail) * 0.5, false, tail);
+                }
             };
             if (b.loadN > 0 || b.loadTimeVar) {
                 char t[96];
@@ -367,7 +377,7 @@ std::string schematicSvgString(const Model& m, const SchematicOptions& o) {
             }
             if (b.driveF > 0) {
                 char t[64];
-                if (S_) std::snprintf(t, sizeof t, "F_{0,%d} sin \xCF\x89t", mi);
+                if (S_) std::snprintf(t, sizeof t, "F_{0,%d} cos \xCF\x89t", mi);
                 else std::snprintf(t, sizeof t, "Harmonic push");
                 arrow(b.driveAngleDeg + 180.0, t);
             }
@@ -382,7 +392,8 @@ std::string schematicSvgString(const Model& m, const SchematicOptions& o) {
                     if (S_) std::snprintf(t, sizeof t, b.momentTimeVar ? "M_{%d}(t)" : "M_{%d}", mi);
                     else if (b.momentTimeVar) std::snprintf(t, sizeof t, "Moment M(t)");
                     else std::snprintf(t, sizeof t, o.values ? "Moment %.0f N m" : "Moment", std::fabs(b.momentN));
-                    addLabel(t, c + Pt{0, -R}, false, c + Pt{0, -R});
+                    if (S_) addLabel(t, c + Pt{0, -R}, false, c, true, Pt{0, -12});
+                    else addLabel(t, c + Pt{0, -R}, false, c + Pt{0, -R});
                 }
             }
             if (b.dloadType != 0 && b.shape.preset == ShapePreset::Box) {            // a row of arrows with the load's envelope
@@ -410,7 +421,8 @@ std::string schematicSvgString(const Model& m, const SchematicOptions& o) {
                     else if (!o.values) std::snprintf(t, sizeof t, "Distributed load");
                     else if (b.dloadType == DL_Equation) std::snprintf(t, sizeof t, "Distributed load q(x) = %s", b.dloadExpr.c_str());
                     else std::snprintf(t, sizeof t, "Distributed load %.0f N/m%s", b.dloadN, b.dloadType == DL_Uniform ? "" : " (peak)");
-                    addLabel(t, env[env.size() / 2], false, env[env.size() / 2]);
+                    if (S_) addLabel(t, env[env.size() / 2], false, env[env.size() / 2], true, Pt{0, -14});
+                    else addLabel(t, env[env.size() / 2], false, env[env.size() / 2]);
                 }
             }
         }
@@ -421,7 +433,7 @@ std::string schematicSvgString(const Model& m, const SchematicOptions& o) {
     std::vector<size_t> sideIdx[2];
     for (size_t i = 0; i < labels.size(); ++i) {
         Label& l = labels[i];
-        if (l.inside) continue;
+        if (l.inside || l.near) continue;
         l.side = l.target.x < midX ? -1 : 1;
         sideIdx[l.side < 0 ? 0 : 1].push_back(i);
     }
@@ -435,7 +447,16 @@ std::string schematicSvgString(const Model& m, const SchematicOptions& o) {
             lastY = y;
         }
     }
+    double Hf = H;                                                                  // the picture grows to hold the labels (many labels in a column need more height than the drawing)
     for (const Label& l : labels) {
+        if (l.near) Hf = std::max(Hf, l.target.y + l.off.y + 36);
+        else if (!l.inside) Hf = std::max(Hf, l.y + 28);
+    }
+    for (const Label& l : labels) {
+        if (l.near) {
+            svg << "<text x=\"" << num(l.target.x + l.off.x) << "\" y=\"" << num(l.target.y + l.off.y) << "\" font-size=\"" << fsz << "\" text-anchor=\"middle\" fill=\"#222\"" << (o.serif ? " font-style=\"italic\"" : "") << ">" << rich(l.text) << "</text>\n";
+            continue;
+        }
         if (l.inside) {
             svg << "<text x=\"" << num(l.anchor.x) << "\" y=\"" << num(l.anchor.y + 5) << "\" font-size=\"" << fsz << "\" text-anchor=\"middle\" fill=\"#222\"" << (o.serif ? " font-style=\"italic\"" : "") << ">" << rich(l.text) << "</text>\n";
             continue;
@@ -449,7 +470,7 @@ std::string schematicSvgString(const Model& m, const SchematicOptions& o) {
         else svg << "<text x=\"" << num(W - 18) << "\" y=\"" << num(l.y) << "\" font-size=\"" << fsz << "\" text-anchor=\"end\" fill=\"#222\"" << fs << ">" << rich(l.text) << "</text>\n";
     }
     if (S_) {                                                                       // the coordinate axes (y points down) and gravity
-        const Pt o0{W - 150, H - 100};
+        const Pt o0{W - 150, Hf - 100};
         svg << "<line x1=\"" << num(o0.x) << "\" y1=\"" << num(o0.y) << "\" x2=\"" << num(o0.x + 62) << "\" y2=\"" << num(o0.y) << "\" stroke=\"#222\" stroke-width=\"2\" marker-end=\"url(#ah)\"/>\n"
             << "<line x1=\"" << num(o0.x) << "\" y1=\"" << num(o0.y) << "\" x2=\"" << num(o0.x) << "\" y2=\"" << num(o0.y + 62) << "\" stroke=\"#222\" stroke-width=\"2\" marker-end=\"url(#ah)\"/>\n"
             << "<text x=\"" << num(o0.x + 68) << "\" y=\"" << num(o0.y + 6) << "\" font-size=\"17\" font-style=\"italic\" fill=\"#222\">x</text>\n"
@@ -458,7 +479,9 @@ std::string schematicSvgString(const Model& m, const SchematicOptions& o) {
             << "<text x=\"" << num(o0.x + 92) << "\" y=\"" << num(o0.y + 82) << "\" font-size=\"17\" font-style=\"italic\" fill=\"#222\">g</text>\n";
     }
     svg << "</svg>\n";
-    return svg.str();
+    std::string text = svg.str();
+    for (size_t at; (at = text.find("@@H@@")) != std::string::npos;) text.replace(at, 5, num(Hf));
+    return text;
 }
 
 }  // namespace vlab

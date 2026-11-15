@@ -46,6 +46,13 @@ if(MINGW)
   target_link_libraries(vlab_tests PRIVATE -static)
 endif()
 
+# ---------------------------------------------------------------- system sheet checks (content, reduction against the simulation, JPG / PNG / PDF export)
+add_executable(vlab_sheet_tests tests/sheet_tests.cpp)
+target_link_libraries(vlab_sheet_tests PRIVATE vlab_io)
+if(MINGW)
+  target_link_libraries(vlab_sheet_tests PRIVATE -static)
+endif()
+
 # ---------------------------------------------------------------- the desktop application
 if(WIN32 AND EXISTS ${CMAKE_SOURCE_DIR}/app/main.cpp)
   include(app/app.cmake)

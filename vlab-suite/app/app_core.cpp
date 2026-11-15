@@ -75,7 +75,7 @@ void App::shutdown() {
     if (coverTex && platform) { platform->destroyTexture(coverTex); coverTex = nullptr; }
     frfCancel = true;
     if (frfHandle) { WaitForSingleObject((HANDLE)frfHandle, 5000); CloseHandle((HANDLE)frfHandle); frfHandle = nullptr; }
-    saveModelFile(docsDir + "\\last_session.vlab", design());
+    if (!sheetNoOpen) saveModelFile(docsDir + "\\last_session.vlab", design());   // (not in the sheet test mode: that run must not replace the user's session)
 }
 
 void App::say(const std::string& s, bool error) {
@@ -356,7 +356,7 @@ void App::exportSheet(bool full, int format) {
     if (!renderSheet(sh, p, fmt, &err)) { say("Could not save the picture: " + err, true); return; }
     lastExportPath = p;
     say("Saved: " + p);
-    openInShell(p, false);
+    if (!sheetNoOpen) openInShell(p, false);
 }
 
 void App::saveDataSettings() {

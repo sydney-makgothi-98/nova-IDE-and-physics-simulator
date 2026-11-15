@@ -1389,7 +1389,7 @@ void App::drawData() {
     ImGui::Checkbox("Arrowheads on the label lines", &schemArrows);
     ImGui::Checkbox("Show the applied loads", &schemLoads);
     ImGui::SetNextItemWidth(-1);
-    ImGui::Combo("##sheetfmt", &sheetFormat, "Save as JPG' + B + '0' + 'Save as PNG' + B + '0' + 'Save as PDF' + B + '0' + '");
+    ImGui::Combo("##sheetfmt", &sheetFormat, "Save as JPG\0Save as PNG\0Save as PDF\0");
     if (sheetDir.empty()) sheetDir = exportsDir;
     pathRow("Save the pictures in", "##sheetdir", sheetDir);
     if (ImGui::Button("1. Image of the system", ImVec2(-1, 34))) exportSheet(false, sheetFormat);
