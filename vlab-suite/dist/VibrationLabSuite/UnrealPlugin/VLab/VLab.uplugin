@@ -1,0 +1,25 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Vibration Lab",
+	"Description": "Validated 2-D dynamics and vibrations: springs, dampers, rigid bodies, friction, collisions, an energy ledger and telemetry export. Runs the same engine as the Vibration Lab Suite desktop application.",
+	"Category": "Physics",
+	"CreatedBy": "Team NOVA",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": true,
+	"IsBetaVersion": true,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "VLabRuntime",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [ "Win64", "Linux", "Mac" ]
+		}
+	]
+}
